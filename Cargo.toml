@@ -47,8 +47,17 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# File transcription
-symphonia = { version = "0.5", features = ["all"] }
+# File transcription: common desktop formats without the full codec/container set.
+symphonia = { version = "0.5", default-features = false, features = [
+    "aac",
+    "flac",
+    "isomp4",
+    "mp3",
+    "ogg",
+    "pcm",
+    "vorbis",
+    "wav",
+] }
 rfd = "0.15"
 
 # Utilities
@@ -69,9 +78,12 @@ cuda    = ["whisper-rs/cuda"]
 metal   = ["whisper-rs/metal"]
 
 [profile.release]
-opt-level = 3
+opt-level = "z"
 lto = true
 codegen-units = 1
+panic = "abort"
+strip = "symbols"
+debug = false
 
 [profile.dev]
 opt-level = 1

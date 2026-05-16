@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
     Arc, Mutex,
 };
-use tokio::sync::RwLock;
+use tokio::{runtime::Handle as TokioHandle, sync::RwLock};
 use tracing::{error, info};
 
 // ─── PTT WH_KEYBOARD_LL 靜態狀態（hook callback 無法捕獲環境）──────────────
@@ -313,6 +313,7 @@ struct LoadedWhisperModel {
 struct ModelRuntime {
     cache: Arc<Mutex<Option<LoadedWhisperModel>>>,
     generation: Arc<AtomicU32>,
+    download_in_progress: Arc<AtomicBool>,
 }
 
 impl ModelRuntime {
@@ -320,6 +321,7 @@ impl ModelRuntime {
         Self {
             cache: Arc::new(Mutex::new(None)),
             generation: Arc::new(AtomicU32::new(0)),
+            download_in_progress: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -373,12 +375,24 @@ pub async fn launch(state: Arc<RwLock<AppState>>) -> anyhow::Result<()> {
         Arc::clone(&selected_model_id),
         model_runtime.clone(),
     )?;
-    preload_selected_model(
+    if !preload_selected_model(
         &ui,
         &config,
         &model_runtime,
         ui.get_selected_model_id().to_string(),
-    );
+    ) {
+        spawn_model_select_or_download(
+            TokioHandle::current(),
+            ui.as_weak(),
+            AppConfig::models_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            ui.get_selected_model_id().to_string(),
+            Arc::clone(&selected_model_id),
+            model_runtime.clone(),
+            config.clone(),
+            whisper_params_from_ui(&ui, &config),
+            true,
+        );
+    }
     setup_template_callbacks(&ui).await;
     setup_recording_callbacks(
         &ui,
@@ -388,7 +402,12 @@ pub async fn launch(state: Arc<RwLock<AppState>>) -> anyhow::Result<()> {
         Arc::clone(&transcript_list),
         model_runtime.clone(),
     );
-    setup_file_mode_callbacks(&ui, &config)?;
+    setup_file_mode_callbacks(
+        &ui,
+        &config,
+        Arc::clone(&selected_model_id),
+        model_runtime.clone(),
+    )?;
     let hotkey_tx = setup_global_hotkey(&ui, ui.get_hotkey().to_string());
     PTT_HOOK_ENABLED.store(ui.get_ptt_mode(), Ordering::Relaxed);
     let ptt_hotkey_tx = setup_ptt_hotkey(&ui, ui.get_ptt_hotkey().to_string());
@@ -602,6 +621,7 @@ fn model_entries_from(models: &[ModelInfo], _selected_id: &str) -> Vec<ModelEntr
             is_downloaded: m.is_downloaded,
             size_mb: m.size.disk_mb as i32,
             quality: m.quality_stars as i32,
+            download_url: m.download_url.as_str().into(),
         })
         .collect()
 }
@@ -634,12 +654,12 @@ fn preload_selected_model(
     config: &AppConfig,
     runtime: &ModelRuntime,
     model_id: String,
-) {
+) -> bool {
     let models_dir = AppConfig::models_dir().unwrap_or_else(|_| PathBuf::from("."));
     let model_path = models_dir.join(format!("ggml-{model_id}.bin"));
     if !model_path.exists() {
         info!("略過模型預載，檔案不存在: {}", model_path.display());
-        return;
+        return false;
     }
     spawn_model_preload(
         runtime.clone(),
@@ -648,6 +668,7 @@ fn preload_selected_model(
         whisper_params_from_ui(ui, config),
         ui.as_weak(),
     );
+    true
 }
 
 fn spawn_model_preload(
@@ -718,6 +739,216 @@ fn spawn_model_preload(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
+fn spawn_model_select_or_download(
+    tokio_handle: TokioHandle,
+    ui_weak: slint::Weak<AppWindow>,
+    models_dir: PathBuf,
+    model_id: String,
+    selected_model_id: Arc<Mutex<String>>,
+    runtime: ModelRuntime,
+    _config: AppConfig,
+    whisper_params: WhisperParams,
+    confirm_if_missing: bool,
+) {
+    tokio_handle.spawn(async move {
+        let manager = ModelManager::new(models_dir.clone());
+        let models = manager.list_available().await;
+
+        let Some(info) = models.iter().find(|m| m.id == model_id).cloned() else {
+            let msg = format!("未知模型: {model_id}");
+            let u = ui_weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = u.upgrade() {
+                    ui.set_status_text(msg.into());
+                }
+            });
+            return;
+        };
+
+        if info.is_downloaded {
+            select_downloaded_model(
+                ui_weak,
+                models_dir,
+                model_id,
+                selected_model_id,
+                runtime,
+                whisper_params,
+                models,
+                "模型已切換",
+            );
+            return;
+        }
+
+        if confirm_if_missing {
+            let display_name = info.display_name.clone();
+            let size_mb = info.size.disk_mb;
+            let result = rfd::AsyncMessageDialog::new()
+                .set_level(rfd::MessageLevel::Warning)
+                .set_title("模型尚未下載")
+                .set_description(format!(
+                    "語音辨識模型 {display_name} 尚未下載。\n\n大小約 {size_mb} MB，是否現在自動下載？\n下載完成後會自動選用並預載。"
+                ))
+                .set_buttons(rfd::MessageButtons::YesNo)
+                .show()
+                .await;
+
+            if result != rfd::MessageDialogResult::Yes {
+                let msg = format!("已取消下載模型 {display_name}");
+                let u = ui_weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = u.upgrade() {
+                        ui.set_status_text(msg.into());
+                    }
+                });
+                return;
+            }
+        }
+
+        download_model_and_select(
+            ui_weak,
+            models_dir,
+            info,
+            selected_model_id,
+            runtime,
+            whisper_params,
+        )
+        .await;
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn select_downloaded_model(
+    ui_weak: slint::Weak<AppWindow>,
+    models_dir: PathBuf,
+    model_id: String,
+    selected_model_id: Arc<Mutex<String>>,
+    runtime: ModelRuntime,
+    whisper_params: WhisperParams,
+    models: Vec<ModelInfo>,
+    status: &'static str,
+) {
+    *selected_model_id.lock().unwrap() = model_id.clone();
+
+    let display = models
+        .iter()
+        .find(|m| m.id == model_id)
+        .map(|m| m.display_name.clone())
+        .unwrap_or_else(|| model_id.clone());
+    let entries = model_entries_from(&models, &model_id);
+    let model_path = models_dir.join(format!("ggml-{model_id}.bin"));
+    let ui_for_preload = ui_weak.clone();
+    let id_for_ui = model_id.clone();
+
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(ui) = ui_weak.upgrade() {
+            ui.set_downloading_id("".into());
+            ui.set_download_progress(0.0);
+            ui.set_selected_model_id(id_for_ui.into());
+            ui.set_model_name(display.into());
+            ui.set_status_text(status.into());
+            ui.set_model_entries(ModelRc::new(VecModel::from(entries)));
+        }
+    });
+
+    spawn_model_preload(
+        runtime,
+        model_id,
+        model_path,
+        whisper_params,
+        ui_for_preload,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn download_model_and_select(
+    ui_weak: slint::Weak<AppWindow>,
+    models_dir: PathBuf,
+    info: ModelInfo,
+    selected_model_id: Arc<Mutex<String>>,
+    runtime: ModelRuntime,
+    whisper_params: WhisperParams,
+) {
+    let model_id = info.id.clone();
+    let size_mb = info.size.disk_mb;
+
+    if runtime
+        .download_in_progress
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        let u = ui_weak.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = u.upgrade() {
+                ui.set_status_text("已有模型正在下載，請稍候...".into());
+            }
+        });
+        return;
+    }
+
+    {
+        let u = ui_weak.clone();
+        let id_show = model_id.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = u.upgrade() {
+                ui.set_downloading_id(id_show.into());
+                ui.set_download_progress(0.0);
+                ui.set_status_text(format!("下載模型 ({size_mb} MB)...").into());
+            }
+        });
+    }
+
+    let downloader = ModelDownloader::new(models_dir.clone());
+    let (tx, mut rx) =
+        tokio::sync::mpsc::channel::<crate::models::downloader::DownloadProgress>(64);
+
+    let ui_prog = ui_weak.clone();
+    tokio::spawn(async move {
+        while let Some(prog) = rx.recv().await {
+            let ratio = prog
+                .total_bytes
+                .map(|t| prog.downloaded_bytes as f32 / t as f32)
+                .unwrap_or(0.5_f32);
+            let u = ui_prog.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = u.upgrade() {
+                    ui.set_download_progress(ratio);
+                }
+            });
+        }
+    });
+
+    match downloader.download(&info, tx).await {
+        Ok(_) => {
+            info!("模型 {model_id} 下載完成");
+            let manager = ModelManager::new(models_dir.clone());
+            let updated = manager.list_available().await;
+            select_downloaded_model(
+                ui_weak,
+                models_dir,
+                model_id,
+                selected_model_id,
+                runtime.clone(),
+                whisper_params,
+                updated,
+                "模型下載完成，已選用",
+            );
+        }
+        Err(e) => {
+            error!("模型下載失敗: {e}");
+            let msg = format!("下載失敗: {e}");
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_downloading_id("".into());
+                    ui.set_download_progress(0.0);
+                    ui.set_status_text(msg.into());
+                }
+            });
+        }
+    }
+    runtime.download_in_progress.store(false, Ordering::SeqCst);
+}
+
 // ─── 模型選擇 / 下載 ──────────────────────────────────────────────────────────
 
 fn setup_model_callbacks(
@@ -730,130 +961,24 @@ fn setup_model_callbacks(
     let ui_weak = ui.as_weak();
     let model_id_arc = Arc::clone(&selected_model_id);
     let config = config.clone();
+    let tokio_handle = TokioHandle::current();
 
     ui.on_model_select_or_download(move |model_id_shared| {
-        let id = model_id_shared.to_string();
-        let mdir = models_dir.clone();
-        let ui_handle = ui_weak.clone();
-        let model_id_arc2 = Arc::clone(&model_id_arc);
-        let runtime = model_runtime.clone();
-        let cfg = config.clone();
-
-        tokio::spawn(async move {
-            let manager = ModelManager::new(mdir.clone());
-            let models = manager.list_available().await;
-
-            let Some(info) = models.iter().find(|m| m.id == id) else {
-                return;
-            };
-
-            if info.is_downloaded {
-                // 更新共用模型 ID（下次錄音立即生效）
-                *model_id_arc2.lock().unwrap() = id.clone();
-
-                let display = info.display_name.clone();
-                let id_c = id.clone();
-                let model_path = mdir.join(format!("ggml-{id_c}.bin"));
-                let params = ui_handle
-                    .upgrade()
-                    .map(|ui| whisper_params_from_ui(&ui, &cfg))
-                    .unwrap_or_else(|| cfg.whisper.clone());
-                let ui_for_preload = ui_handle.clone();
-                let entries = model_entries_from(&models, &id_c);
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = ui_handle.upgrade() {
-                        ui.set_selected_model_id(id_c.into());
-                        ui.set_model_name(display.into());
-                        ui.set_status_text("模型已切換".into());
-                        ui.set_model_entries(ModelRc::new(VecModel::from(entries)));
-                    }
-                });
-                spawn_model_preload(runtime, id, model_path, params, ui_for_preload);
-            } else {
-                // 啟動下載
-                let sha = info.sha1.to_string();
-                let size_mb = info.size.disk_mb;
-                let id_c = id.clone();
-
-                {
-                    let uw = ui_handle.clone();
-                    let id_show = id_c.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = uw.upgrade() {
-                            ui.set_downloading_id(id_show.into());
-                            ui.set_download_progress(0.0);
-                            ui.set_status_text(format!("下載模型 ({size_mb} MB)...").into());
-                        }
-                    });
-                }
-
-                let downloader = ModelDownloader::new(mdir.clone());
-                let (tx, mut rx) =
-                    tokio::sync::mpsc::channel::<crate::models::downloader::DownloadProgress>(64);
-
-                let ui_prog = ui_handle.clone();
-                tokio::spawn(async move {
-                    while let Some(prog) = rx.recv().await {
-                        let ratio = prog
-                            .total_bytes
-                            .map(|t| prog.downloaded_bytes as f32 / t as f32)
-                            .unwrap_or(0.5_f32);
-                        let ur = ui_prog.clone();
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = ur.upgrade() {
-                                ui.set_download_progress(ratio);
-                            }
-                        });
-                    }
-                });
-
-                match downloader.download(&id, &sha, tx).await {
-                    Ok(_) => {
-                        info!("模型 {id} 下載完成");
-                        // 下載後自動切換
-                        *model_id_arc2.lock().unwrap() = id.clone();
-
-                        let manager2 = ModelManager::new(mdir.clone());
-                        let updated = manager2.list_available().await;
-                        let display = updated
-                            .iter()
-                            .find(|m| m.id == id)
-                            .map(|m| m.display_name.clone())
-                            .unwrap_or_else(|| id.clone());
-                        let entries = model_entries_from(&updated, &id);
-                        let model_path = mdir.join(format!("ggml-{id}.bin"));
-                        let params = ui_handle
-                            .upgrade()
-                            .map(|ui| whisper_params_from_ui(&ui, &cfg))
-                            .unwrap_or_else(|| cfg.whisper.clone());
-                        let ui_for_preload = ui_handle.clone();
-                        let id_for_ui = id.clone();
-
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = ui_handle.upgrade() {
-                                ui.set_downloading_id("".into());
-                                ui.set_download_progress(0.0);
-                                ui.set_selected_model_id(id_for_ui.into());
-                                ui.set_model_name(display.into());
-                                ui.set_status_text("模型下載完成，已選用".into());
-                                ui.set_model_entries(ModelRc::new(VecModel::from(entries)));
-                            }
-                        });
-                        spawn_model_preload(runtime, id, model_path, params, ui_for_preload);
-                    }
-                    Err(e) => {
-                        error!("模型下載失敗: {e}");
-                        let msg = format!("下載失敗: {e}");
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = ui_handle.upgrade() {
-                                ui.set_downloading_id("".into());
-                                ui.set_status_text(msg.into());
-                            }
-                        });
-                    }
-                }
-            }
-        });
+        let params = ui_weak
+            .upgrade()
+            .map(|ui| whisper_params_from_ui(&ui, &config))
+            .unwrap_or_else(|| config.whisper.clone());
+        spawn_model_select_or_download(
+            tokio_handle.clone(),
+            ui_weak.clone(),
+            models_dir.clone(),
+            model_id_shared.to_string(),
+            Arc::clone(&model_id_arc),
+            model_runtime.clone(),
+            config.clone(),
+            params,
+            false,
+        );
     });
 
     // 開啟模型資料夾
@@ -939,6 +1064,7 @@ fn setup_recording_callbacks(
     model_runtime: ModelRuntime,
 ) {
     let ui_weak = ui.as_weak();
+    let tokio_handle = TokioHandle::current();
 
     // ── toggle-recording ─────────────────────────────────────────────────────
     ui.on_toggle_recording({
@@ -948,6 +1074,7 @@ fn setup_recording_callbacks(
         let ui_ref = ui_weak.clone();
         let cfg = config.clone();
         let runtime = model_runtime.clone();
+        let tokio_handle = tokio_handle.clone();
 
         move || {
             let mut handle = handle_arc.lock().unwrap();
@@ -978,14 +1105,28 @@ fn setup_recording_callbacks(
 
                 info!("嘗試啟動錄音，模型: {}", model_id);
                 if !model_path.exists() {
-                    let msg = format!("找不到模型 {}，請先在設定中下載", model_id);
+                    let msg = format!("模型 {model_id} 尚未下載，等待使用者確認下載");
                     error!("{msg}");
                     let u = ui_ref.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = u.upgrade() {
-                            ui.set_status_text(msg.into());
+                            ui.set_status_text("模型尚未下載，請確認是否自動下載".into());
                         }
                     });
+                    spawn_model_select_or_download(
+                        tokio_handle.clone(),
+                        ui_ref.clone(),
+                        models_dir,
+                        model_id,
+                        Arc::clone(&model_id_arc),
+                        runtime.clone(),
+                        cfg.clone(),
+                        ui_ref
+                            .upgrade()
+                            .map(|ui| whisper_params_from_ui(&ui, &cfg))
+                            .unwrap_or_else(|| cfg.whisper.clone()),
+                        true,
+                    );
                     return;
                 }
 
@@ -1816,9 +1957,15 @@ fn inject_text_to_focused_window(text: &str) {
 
 // ─── 檔案模式 Callbacks ───────────────────────────────────────────────────────
 
-fn setup_file_mode_callbacks(ui: &AppWindow, config: &AppConfig) -> anyhow::Result<()> {
+fn setup_file_mode_callbacks(
+    ui: &AppWindow,
+    config: &AppConfig,
+    selected_model_id: Arc<Mutex<String>>,
+    model_runtime: ModelRuntime,
+) -> anyhow::Result<()> {
     let whisper_params = config.whisper.clone();
     let models_dir = AppConfig::models_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let tokio_handle = TokioHandle::current();
 
     // 開啟檔案對話框
     let ui_handle = ui.as_weak();
@@ -1853,6 +2000,10 @@ fn setup_file_mode_callbacks(ui: &AppWindow, config: &AppConfig) -> anyhow::Resu
     let ui_handle = ui.as_weak();
     let params = whisper_params.clone();
     let mdir = models_dir.clone();
+    let model_id_arc = Arc::clone(&selected_model_id);
+    let runtime = model_runtime.clone();
+    let cfg = config.clone();
+    let tokio_handle2 = tokio_handle.clone();
     ui.on_start_file_transcription(move || {
         let ui_weak = ui_handle.clone();
 
@@ -1864,7 +2015,7 @@ fn setup_file_mode_callbacks(ui: &AppWindow, config: &AppConfig) -> anyhow::Resu
             if full.is_empty() {
                 return;
             }
-            let model: String = ui.get_model_name().into();
+            let model: String = ui.get_selected_model_id().into();
             let fmt: String = ui.get_file_output_format().into();
             (
                 PathBuf::from(full),
@@ -1882,6 +2033,10 @@ fn setup_file_mode_callbacks(ui: &AppWindow, config: &AppConfig) -> anyhow::Resu
         let ui_weak2 = ui_weak.clone();
         let params2 = params.clone();
         let mdir2 = mdir.clone();
+        let model_id_arc2 = Arc::clone(&model_id_arc);
+        let runtime2 = runtime.clone();
+        let cfg2 = cfg.clone();
+        let tokio_handle3 = tokio_handle2.clone();
 
         std::thread::spawn(move || {
             {
@@ -1923,7 +2078,10 @@ fn setup_file_mode_callbacks(ui: &AppWindow, config: &AppConfig) -> anyhow::Resu
             let model_path = mdir2.join(format!("ggml-{}.bin", id_lower));
 
             if !model_path.exists() {
-                let msg = format!("找不到模型: {}\n請先在模型管理員下載", model_path.display());
+                let msg = format!(
+                    "模型尚未下載: {}\n已開啟下載確認，下載完成後請再開始轉錄。",
+                    model_path.display()
+                );
                 let uw = ui_weak2.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = uw.upgrade() {
@@ -1932,6 +2090,17 @@ fn setup_file_mode_callbacks(ui: &AppWindow, config: &AppConfig) -> anyhow::Resu
                         ui.set_file_has_result(true);
                     }
                 });
+                spawn_model_select_or_download(
+                    tokio_handle3,
+                    ui_weak2,
+                    mdir2,
+                    id_lower,
+                    model_id_arc2,
+                    runtime2,
+                    cfg2,
+                    params2.clone(),
+                    true,
+                );
                 return;
             }
 

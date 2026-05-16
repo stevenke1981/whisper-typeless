@@ -5,7 +5,7 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tracing::{info, warn};
 
-use super::registry::ModelRegistry;
+use super::registry::ModelInfo;
 
 #[derive(Debug, Clone)]
 pub struct DownloadProgress {
@@ -32,41 +32,70 @@ impl ModelDownloader {
 
     pub async fn download(
         &self,
-        model_id: &str,
-        expected_sha1: &str,
+        model: &ModelInfo,
         progress_tx: tokio::sync::mpsc::Sender<DownloadProgress>,
     ) -> anyhow::Result<PathBuf> {
         fs::create_dir_all(&self.models_dir).await?;
 
+        let model_id = model.id.as_str();
         let dest = self.models_dir.join(format!("ggml-{model_id}.bin"));
         let temp = dest.with_extension("bin.tmp");
 
-        let url = ModelRegistry::download_url(model_id);
-        info!("下載模型: {url}");
+        let urls = std::iter::once(model.download_url.as_str())
+            .chain(model.mirror_urls.iter().map(String::as_str))
+            .filter(|url| !url.trim().is_empty())
+            .collect::<Vec<_>>();
 
-        // 主要源：HuggingFace；網路錯誤或 HTTP 非 2xx 時自動切換 ModelScope 備用源
-        let response = match self.client.get(&url).send().await {
-            Ok(r) if r.status().is_success() => r,
-            Ok(r) => {
-                warn!("主要源 HTTP {} 失敗，嘗試 ModelScope 備用源", r.status());
-                self.client
-                    .get(ModelRegistry::modelscope_url(model_id))
-                    .send()
-                    .await?
-                    .error_for_status()?
-            }
-            Err(e) => {
-                warn!("主要源連線失敗（{}），嘗試 ModelScope 備用源", e);
-                self.client
-                    .get(ModelRegistry::modelscope_url(model_id))
-                    .send()
-                    .await?
-                    .error_for_status()?
-            }
-        };
+        if urls.is_empty() {
+            return Err(anyhow::anyhow!("模型 {model_id} 沒有設定下載連結"));
+        }
 
+        let mut last_error: Option<anyhow::Error> = None;
+
+        for (idx, url) in urls.iter().enumerate() {
+            info!("下載模型: {url}");
+            if idx > 0 {
+                warn!("改用備用模型來源重試: {url}");
+            }
+
+            match self
+                .download_from_url(
+                    url,
+                    model_id,
+                    &model.sha1,
+                    &dest,
+                    &temp,
+                    progress_tx.clone(),
+                )
+                .await
+            {
+                Ok(path) => return Ok(path),
+                Err(e) => {
+                    warn!("模型來源下載失敗: {e}");
+                    let _ = fs::remove_file(&temp).await;
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        match last_error {
+            Some(e) => Err(e),
+            None => Err(anyhow::anyhow!("沒有可用的模型下載來源")),
+        }
+    }
+
+    async fn download_from_url(
+        &self,
+        url: &str,
+        model_id: &str,
+        expected_sha1: &str,
+        dest: &PathBuf,
+        temp: &PathBuf,
+        progress_tx: tokio::sync::mpsc::Sender<DownloadProgress>,
+    ) -> anyhow::Result<PathBuf> {
+        let response = self.client.get(url).send().await?.error_for_status()?;
         let total = response.content_length();
-        let mut file = fs::File::create(&temp).await?;
+        let mut file = fs::File::create(temp).await?;
         let mut stream = response.bytes_stream();
         let mut downloaded = 0u64;
         let mut hasher = Sha1::new();
@@ -93,17 +122,16 @@ impl ModelDownloader {
         drop(file);
 
         let computed = format!("{:x}", hasher.finalize());
-        if !expected_sha1.is_empty() && computed != expected_sha1 {
-            fs::remove_file(&temp).await?;
+        if !expected_sha1.is_empty() && !computed.eq_ignore_ascii_case(expected_sha1) {
             return Err(anyhow::anyhow!(
                 "SHA1 校驗失敗: 期望 {expected_sha1}, 得到 {computed}"
             ));
         }
 
-        fs::rename(&temp, &dest).await?;
+        fs::rename(temp, dest).await?;
         info!("模型下載完成: {}", dest.display());
 
-        Ok(dest)
+        Ok(dest.clone())
     }
 
     pub async fn is_downloaded(&self, model_id: &str) -> bool {

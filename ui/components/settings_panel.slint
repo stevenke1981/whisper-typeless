@@ -8,6 +8,7 @@ export struct ModelEntry {
     is-downloaded: bool,
     size-mb: int,
     quality: int,
+    download-url: string,
 }
 
 export struct TemplateEditEntry {
@@ -637,7 +638,7 @@ export component SettingsPanel {
                         for entry in root.model-entries: Rectangle {
                             property <bool> is-sel: entry.id == root.selected-model-id;
                             property <bool> is-dl: entry.id == root.downloading-id;
-                            height: 56px;
+                            height: 68px;
 
                             Rectangle {
                                 y: 2px;
@@ -659,6 +660,7 @@ export component SettingsPanel {
                                 VerticalLayout {
                                     alignment: center;
                                     spacing: 3px;
+                                    horizontal-stretch: 1;
 
                                     Text {
                                         text: entry.display-name;
@@ -671,6 +673,14 @@ export component SettingsPanel {
                                         text: entry.quality + "★ · " + entry.size-mb + " MB";
                                         font-size: Tokens.font-xs;
                                         color: Tokens.text-secondary;
+                                    }
+
+                                    Text {
+                                        text: entry.download-url;
+                                        font-size: 10px;
+                                        color: Tokens.text-secondary;
+                                        overflow: elide;
+                                        wrap: no-wrap;
                                     }
                                 }
 

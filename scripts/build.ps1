@@ -174,10 +174,22 @@ if ($Package -and $Release) {
     $zipName = "whisper-typeless-windows-x64.zip"
     $zipPath = "$distDir\$zipName"
 
-    $filesToPack = @(
-        $exePath,
-        "$ProjectRoot\README.md"
-    )
+    $filesToPack = @($exePath)
+
+    $catalogPath = Join-Path $ProjectRoot "model-catalog.json"
+    if (Test-Path $catalogPath) {
+        $filesToPack += $catalogPath
+    }
+
+    $catalogDocPath = Join-Path $ProjectRoot "MODEL_CATALOG.md"
+    if (Test-Path $catalogDocPath) {
+        $filesToPack += $catalogDocPath
+    }
+
+    $readmePath = Join-Path $ProjectRoot "README.md"
+    if (Test-Path $readmePath) {
+        $filesToPack += $readmePath
+    }
 
     # Include templates directory if exists
     if (Test-Path "$ProjectRoot\templates") {
