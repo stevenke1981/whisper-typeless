@@ -1,0 +1,164 @@
+// v2.0 新增 — Inline 快速操作列（模型 / 輸出 / 模板 / 錯誤紀錄）
+import { Tokens, DarkTokens, GlassDark } from "../styles/tokens.slint";
+
+component Chip inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <bool> active: false;
+    in property <bool> dark-mode: false;
+    in property <color> accent;
+    callback clicked();
+
+    property <color> bg-active: dark-mode ? GlassDark.chip-bg-active : Tokens.chip-bg-active;
+    property <color> bg-idle:   dark-mode ? GlassDark.chip-bg        : Tokens.chip-bg;
+    property <color> txt:       dark-mode ? DarkTokens.text-primary  : Tokens.text-primary;
+    property <color> txt2:      dark-mode ? DarkTokens.text-secondary: Tokens.text-secondary;
+
+    height: 26px;
+    border-radius: 13px;
+    background: active ? bg-active : bg-idle;
+    animate background { duration: Tokens.anim-fast; }
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 10px;
+        spacing: 4px;
+        alignment: center;
+
+        if root.icon != "": Text {
+            text: root.icon;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.label;
+            font-size: Tokens.font-xs;
+            font-weight: active ? 600 : 500;
+            color: active ? accent : txt;
+            vertical-alignment: center;
+        }
+    }
+
+    TouchArea {
+        clicked => { root.clicked(); }
+        mouse-cursor: MouseCursor.pointer;
+    }
+}
+
+export component QuickActions {
+    in property <bool> dark-mode: false;
+    in property <string> current-template: "auto";
+    in property <string> model-name: "small";
+    in property <string> device-label: "CPU";
+    in property <string> latency-text: "–";
+    in property <int> char-count: 0;
+    in property <int> error-count: 0;
+    in property <bool> clipboard-enabled: true;
+    in property <bool> inject-enabled: true;
+
+    callback open-template-menu();
+    callback open-model-menu();
+    callback toggle-clipboard();
+    callback toggle-inject();
+    callback clear-transcript();
+    callback show-error-log();
+
+    property <color> acc:      dark-mode ? DarkTokens.accent        : Tokens.accent;
+    property <color> txt2:     dark-mode ? DarkTokens.text-secondary: Tokens.text-secondary;
+    property <color> hairline: dark-mode ? GlassDark.glass-hairline : Tokens.glass-hairline;
+
+    height: 38px;
+
+    Rectangle {
+        // 上下細線
+        Rectangle {
+            y: 0; height: 1px;
+            background: root.hairline;
+        }
+        Rectangle {
+            y: parent.height - 1px; height: 1px;
+            background: root.hairline;
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 6px;
+        alignment: space-between;
+
+        // 左：模板 / 模型
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: center;
+
+            Chip {
+                label: root.current-template;
+                icon: "✦";
+                active: true;
+                dark-mode: root.dark-mode;
+                accent: root.acc;
+                clicked => { root.open-template-menu(); }
+            }
+            Chip {
+                label: root.model-name;
+                icon: "⌬";
+                dark-mode: root.dark-mode;
+                accent: root.acc;
+                clicked => { root.open-model-menu(); }
+            }
+        }
+
+        // 中：輸出開關 + 清除
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: center;
+
+            Chip {
+                label: "剪貼簿";
+                icon: "📋";
+                active: root.clipboard-enabled;
+                dark-mode: root.dark-mode;
+                accent: #34c759;
+                clicked => { root.toggle-clipboard(); }
+            }
+            Chip {
+                label: "注入";
+                icon: "⌨";
+                active: root.inject-enabled;
+                dark-mode: root.dark-mode;
+                accent: root.acc;
+                clicked => { root.toggle-inject(); }
+            }
+            Chip {
+                label: "清除";
+                icon: "✕";
+                dark-mode: root.dark-mode;
+                accent: root.acc;
+                clicked => { root.clear-transcript(); }
+            }
+        }
+
+        // 右：錯誤紀錄徽章
+        Rectangle {
+            width: 30px; height: 26px;
+            border-radius: 13px;
+            background: root.error-count > 0
+                ? rgba(255, 59, 48, 0.15)
+                : transparent;
+            Text {
+                text: root.error-count > 0
+                    ? "⚠ " + root.error-count
+                    : "⚠";
+                font-size: Tokens.font-xs;
+                color: root.error-count > 0 ? Tokens.recording-red : root.txt2;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            TouchArea {
+                clicked => { root.show-error-log(); }
+                mouse-cursor: MouseCursor.pointer;
+            }
+        }
+    }
+}

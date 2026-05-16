@@ -1,0 +1,22 @@
+# Workspace-level Cargo configuration for whisper-typeless
+# These settings apply to every `cargo build` run in this directory,
+# so you don't need to dot-source setup-cuda-env.ps1 first.
+
+# ── CUDA build environment ────────────────────────────────────────────────────
+# RTX 3060 Ti = compute capability 8.6 (sm_86).
+# CMake 4.x defaults CUDA_ARCHITECTURES to "native" which fails when the GPU
+# is not accessible during configure (e.g. in some shell sessions).
+# Setting it explicitly here bypasses the runtime GPU probe.
+[env]
+CMAKE_CUDA_ARCHITECTURES = { value = "86", force = false }
+
+# CUDA 12.6 supports VS 2017–2022 officially; VS 2026 / MSVC 14.50 triggers a
+# hard error in nvcc unless -allow-unsupported-compiler is passed.
+# -Xcompiler=-fPIC is the whisper-rs-sys build default and must be preserved
+# because this env var completely overrides the CMake internal default.
+CMAKE_CUDA_FLAGS = { value = "-allow-unsupported-compiler -Xcompiler=-fPIC", force = false }
+
+# ── Linker ───────────────────────────────────────────────────────────────────
+# Uncomment if lld-link is installed — dramatically faster link times.
+# [target.x86_64-pc-windows-msvc]
+# linker = "lld-link"

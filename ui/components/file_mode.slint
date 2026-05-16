@@ -1,0 +1,217 @@
+import { Tokens } from "../styles/tokens.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export component FileModeView {
+    in property <color> bg;
+    in property <color> bg2;
+    in property <color> text-col;
+    in property <color> text2-col;
+    in property <color> border-col;
+    in property <color> acc;
+
+    in-out property <string> file-name: "";
+    in-out property <float> progress: 0.0;
+    in-out property <bool> processing: false;
+    in-out property <bool> has-result: false;
+    in-out property <string> result-text: "";
+    in-out property <string> output-format: "txt";
+
+    callback open-file-dialog();
+    callback start-transcription();
+    callback copy-result();
+    callback export-result(string);
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 12px;
+        alignment: start;
+
+        // ── File picker zone ─────────────────────────────────
+        Rectangle {
+            height: 100px;
+            border-radius: Tokens.radius-md;
+            background: file-name != "" ? rgba(0, 113, 227, 0.07) : bg2;
+            border-width: 2px;
+            border-color: file-name != "" ? acc : border-col;
+            animate background { duration: Tokens.anim-fast; }
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 6px;
+
+                Text {
+                    text: file-name != "" ? "📄" : "📂";
+                    font-size: 32px;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: file-name != "" ? file-name : "點擊選擇音訊/影片檔案";
+                    font-size: Tokens.font-sm;
+                    color: file-name != "" ? text-col : Tokens.text-placeholder;
+                    horizontal-alignment: center;
+                    overflow: elide;
+                }
+            }
+
+            TouchArea {
+                enabled: !processing;
+                clicked => { root.open-file-dialog(); }
+            }
+        }
+
+        // ── Output format picker ─────────────────────────────
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+
+            Text {
+                text: "輸出格式：";
+                font-size: Tokens.font-sm;
+                color: text2-col;
+                vertical-alignment: center;
+            }
+
+            Rectangle {
+                property <bool> sel: root.output-format == "txt";
+                width: 52px; height: 28px;
+                border-radius: Tokens.radius-sm;
+                background: sel ? acc : bg2;
+                border-width: 1px;
+                border-color: sel ? acc : border-col;
+                Text { text: "TXT"; font-size: Tokens.font-sm; color: sel ? white : text2-col; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { enabled: !processing; clicked => { root.output-format = "txt"; } }
+            }
+
+            Rectangle {
+                property <bool> sel: root.output-format == "srt";
+                width: 52px; height: 28px;
+                border-radius: Tokens.radius-sm;
+                background: sel ? acc : bg2;
+                border-width: 1px;
+                border-color: sel ? acc : border-col;
+                Text { text: "SRT"; font-size: Tokens.font-sm; color: sel ? white : text2-col; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { enabled: !processing; clicked => { root.output-format = "srt"; } }
+            }
+
+            Rectangle {
+                property <bool> sel: root.output-format == "vtt";
+                width: 52px; height: 28px;
+                border-radius: Tokens.radius-sm;
+                background: sel ? acc : bg2;
+                border-width: 1px;
+                border-color: sel ? acc : border-col;
+                Text { text: "VTT"; font-size: Tokens.font-sm; color: sel ? white : text2-col; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { enabled: !processing; clicked => { root.output-format = "vtt"; } }
+            }
+        }
+
+        // ── Progress bar ─────────────────────────────────────
+        if processing || has-result: Rectangle {
+            height: 6px;
+            border-radius: 3px;
+            background: bg2;
+
+            Rectangle {
+                x: 0;
+                width: parent.width * (has-result ? 1.0 : root.progress);
+                height: parent.height;
+                border-radius: 3px;
+                background: has-result ? Tokens.success : acc;
+                animate width { duration: 300ms; }
+            }
+        }
+
+        // ── Start button ─────────────────────────────────────
+        Rectangle {
+            height: 44px;
+            border-radius: Tokens.radius-md;
+            background: (file-name != "" && !processing) ? acc : bg2;
+            border-width: 1px;
+            border-color: (file-name != "" && !processing) ? acc : border-col;
+            animate background { duration: Tokens.anim-fast; }
+
+            Text {
+                text: processing ? "⏳  轉錄中…" : "▶  開始轉錄";
+                font-size: Tokens.font-md;
+                color: (file-name != "" && !processing) ? white : Tokens.text-placeholder;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            TouchArea {
+                enabled: file-name != "" && !processing;
+                clicked => { root.start-transcription(); }
+            }
+        }
+
+        // ── Result area ──────────────────────────────────────
+        if has-result: Rectangle {
+            vertical-stretch: 1;
+            min-height: 200px;
+            border-radius: Tokens.radius-md;
+            background: bg2;
+            border-width: 1px;
+            border-color: border-col;
+
+            VerticalLayout {
+                // toolbar
+                Rectangle {
+                    height: 36px;
+                    background: Tokens.bg-tertiary;
+
+                    Rectangle { y: parent.height - 1px; height: 1px; background: border-col; }
+
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        alignment: space-between;
+
+                        Text {
+                            text: "轉錄結果";
+                            font-size: Tokens.font-xs;
+                            font-weight: 600;
+                            color: text2-col;
+                            vertical-alignment: center;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 6px;
+
+                            Rectangle {
+                                width: 52px; height: 24px;
+                                border-radius: Tokens.radius-sm;
+                                background: bg2;
+                                border-width: 1px; border-color: border-col;
+                                Text { text: "複製"; font-size: Tokens.font-xs; color: text-col; horizontal-alignment: center; vertical-alignment: center; }
+                                TouchArea { clicked => { root.copy-result(); } }
+                            }
+
+                            Rectangle {
+                                width: 52px; height: 24px;
+                                border-radius: Tokens.radius-sm;
+                                background: acc;
+                                Text { text: "匯出"; font-size: Tokens.font-xs; color: white; horizontal-alignment: center; vertical-alignment: center; }
+                                TouchArea { clicked => { root.export-result(root.output-format); } }
+                            }
+                        }
+                    }
+                }
+
+                // scroll area
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        padding: 12px;
+                        Text {
+                            text: root.result-text;
+                            font-size: Tokens.font-sm;
+                            color: text-col;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

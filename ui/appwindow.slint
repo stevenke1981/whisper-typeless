@@ -1,0 +1,943 @@
+// v2.1 — 雙模式：完整視窗 (Full) ↔ 浮動視窗 (Floating)
+// 保留 v1.x 所有 properties / callbacks 以維持 Rust bridge 相容性
+import { Tokens, DarkTokens, GlassDark } from "styles/tokens.slint";
+import { WaveformView } from "components/waveform.slint";
+import { ContextBar, TemplateItem } from "components/context_bar.slint";
+import { TranscriptView, TranscriptSegmentData } from "components/transcript.slint";
+import { SettingsPanel, ModelEntry, TemplateEditEntry } from "components/settings_panel.slint";
+import { FileModeView } from "components/file_mode.slint";
+import { CompactBar } from "components/compact_bar.slint";
+import { QuickActions } from "components/quick_actions.slint";
+
+export component AppWindow inherits Window {
+    title: "whisper-typeless";
+    background: root.bg;
+    // 注意：no-frame / always-on-top 是 Window 建構期屬性，無法 runtime 切換。
+    // 兩模式都保留 OS 框架；always-on-top 由 Rust 端 WindowHandle 動態控制。
+
+    // 浮動模式：380x52 摺疊 / 380x540 展開
+    // 完整模式：560x680 固定佈局
+    min-width: root.floating-mode ? 360px : 480px;
+    min-height: root.floating-mode ? 52px : 560px;
+    preferred-width: root.floating-mode ? 380px : 560px;
+    preferred-height: root.floating-mode
+        ? (root.floating-expanded ? Tokens.exp-h : Tokens.bar-h)
+        : 680px;
+
+    // ── v2.x 新增屬性 ─────────────────────────────────────────
+    in-out property <bool> floating-mode: false;     // false = 完整視窗 (預設)
+    in-out property <bool> floating-expanded: false; // 僅在 floating-mode 生效
+    in-out property <bool> pin-on-top: true;
+    in-out property <bool> show-error-log: false;
+    in property <[string]> error-log: [];
+    in property <[TemplateItem]> templates: [
+        { id: "auto",      icon: "🔮", name: "自動" },
+        { id: "meeting",   icon: "🏢", name: "會議" },
+        { id: "casual",    icon: "💬", name: "口語" },
+        { id: "technical", icon: "💻", name: "技術" },
+        { id: "medical",   icon: "🏥", name: "醫療" },
+        { id: "legal",     icon: "⚖", name: "法律" },
+    ];
+
+    callback toggle-floating-mode();
+    callback toggle-floating-expanded();
+    callback request-close();
+    callback start-drag();
+    callback clear-error-log();
+
+    // ── v1.x 既有屬性 ────────────────────────────────────────
+    in-out property <bool> is-recording: false;
+    in-out property <bool> is-processing: false;
+    in-out property <bool> settings-open: false;
+    in-out property <bool> dark-mode: false;
+
+    in-out property <string> current-template: "auto";
+    in-out property <string> current-partial: "";
+    in-out property <[TranscriptSegmentData]> transcript-segments: [];
+    in-out property <float> audio-level: 0.0;
+    in-out property <[float]> waveform-bars: [];
+    in-out property <string> status-text: "就緒";
+    in-out property <string> model-name: "small";
+    in-out property <int> char-count: 0;
+    in-out property <string> latency-text: "–";
+    in-out property <string> device-label: "CPU";
+
+    in property <[ModelEntry]> model-entries: [];
+    in-out property <string> selected-model-id: "small";
+    in property <string> downloading-id: "";
+    in property <float> download-progress: 0.0;
+
+    in-out property <bool> mod-vad: true;
+    in-out property <bool> mod-context: true;
+    in-out property <bool> mod-opencc: true;
+    in-out property <bool> mod-inject: true;
+    in-out property <bool> mod-waveform: true;
+    in-out property <bool> mod-history: true;
+    in-out property <bool> clipboard-enabled: true;
+    in-out property <bool> inject-enabled: true;
+
+    in-out property <float> vad-threshold: 0.6;
+    in-out property <float> silence-timeout: 1500;
+    in-out property <int> n-threads: 4;
+    in-out property <bool> use-gpu: true;
+    in-out property <float> temperature: 0.0;
+    in-out property <string> conversion-mode: "zh-TW";
+    in-out property <bool> append-newline: true;
+
+    in-out property <string> hotkey: "Ctrl+Shift+W";
+    in-out property <string> ptt-hotkey: "Ctrl+Alt+L";
+    in-out property <bool> ptt-mode: true;
+    in-out property <string> save-status: "";
+
+    in-out property <bool> file-mode: false;
+    in-out property <string> file-name: "";
+    in-out property <float> file-progress: 0.0;
+    in-out property <bool> file-processing: false;
+    in-out property <bool> file-has-result: false;
+    in-out property <string> file-result: "";
+    in-out property <string> file-output-format: "txt";
+
+    in-out property <[TemplateEditEntry]> template-entries: [];
+
+    callback toggle-recording();
+    callback clear-transcript();
+    callback template-selected(string);
+    callback settings-changed();
+    callback save-settings();
+    callback open-model-manager();
+    callback model-select-or-download(string);
+    callback open-file-dialog();
+    callback start-file-transcription();
+    callback file-copy-result();
+    callback file-export-result(string);
+    callback template-save(string, string, string);
+    callback template-delete(string);
+
+    // ── 主題色 ────────────────────────────────────────────────
+    property <color> bg:       root.dark-mode ? DarkTokens.bg-primary    : Tokens.bg-primary;
+    property <color> bg2:      root.dark-mode ? DarkTokens.bg-secondary  : Tokens.bg-secondary;
+    property <color> bg3:      root.dark-mode ? DarkTokens.bg-tertiary   : Tokens.bg-tertiary;
+    property <color> txt:      root.dark-mode ? DarkTokens.text-primary  : Tokens.text-primary;
+    property <color> txt2:     root.dark-mode ? DarkTokens.text-secondary: Tokens.text-secondary;
+    property <color> acc:      root.dark-mode ? DarkTokens.accent        : Tokens.accent;
+    property <color> border-c: root.dark-mode ? DarkTokens.border        : Tokens.border;
+    property <color> stroke:   root.dark-mode ? GlassDark.glass-stroke   : Tokens.glass-stroke;
+
+    // ── 鍵盤快捷鍵（隱形 FocusScope，避免攔截 pointer events）──
+    forward-focus: kb;
+    kb := FocusScope {
+        x: 0; y: 0;
+        width: 0px;
+        height: 0px;
+        key-pressed(e) => {
+            if (e.text == Key.Escape) {
+                if (root.settings-open)   { root.settings-open = false; return accept; }
+                if (root.show-error-log)  { root.show-error-log = false; return accept; }
+                if (root.floating-mode && root.floating-expanded) {
+                    root.floating-expanded = false;
+                    root.toggle-floating-expanded();
+                    return accept;
+                }
+            }
+            return reject;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 模式 A：完整視窗（floating-mode = false，預設）
+    // ═══════════════════════════════════════════════════════════
+    if !root.floating-mode: Rectangle {
+        x: 0; y: 0;
+        width: root.width;
+        height: root.height;
+        background: root.bg;
+
+        VerticalLayout {
+            // TitleBar
+            Rectangle {
+                height: 52px;
+                background: root.bg2;
+                Rectangle {
+                    y: parent.height - 1px; height: 1px;
+                    background: root.border-c;
+                }
+
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 10px;
+                    alignment: space-between;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: center;
+                        Text {
+                            text: "🎙";
+                            font-size: 18px;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "whisper-typeless";
+                            font-size: Tokens.font-md;
+                            font-weight: 600;
+                            color: root.txt;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: center;
+
+                        // 切換到浮動模式
+                        Rectangle {
+                            width: 32px; height: 32px;
+                            border-radius: Tokens.radius-sm;
+                            background: root.bg3;
+                            Text {
+                                text: "⛶";
+                                font-size: 14px;
+                                color: root.txt2;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea {
+                                clicked => {
+                                    root.floating-mode = true;
+                                    root.floating-expanded = false;
+                                    root.toggle-floating-mode();
+                                }
+                                mouse-cursor: MouseCursor.pointer;
+                            }
+                        }
+
+                        // 主題切換
+                        Rectangle {
+                            width: 32px; height: 32px;
+                            border-radius: Tokens.radius-sm;
+                            background: root.dark-mode
+                                ? rgba(255,255,255,0.1)
+                                : root.bg3;
+                            Text {
+                                text: root.dark-mode ? "☀" : "🌙";
+                                font-size: 14px;
+                                color: root.txt2;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea {
+                                clicked => { root.dark-mode = !root.dark-mode; }
+                                mouse-cursor: MouseCursor.pointer;
+                            }
+                        }
+
+                        // 錯誤紀錄按鈕
+                        Rectangle {
+                            width: 32px; height: 32px;
+                            border-radius: Tokens.radius-sm;
+                            background: root.error-log.length > 0
+                                ? rgba(255, 59, 48, 0.15)
+                                : root.bg3;
+                            Text {
+                                text: root.error-log.length > 0
+                                    ? "⚠ " + root.error-log.length
+                                    : "⚠";
+                                font-size: Tokens.font-xs;
+                                color: root.error-log.length > 0 ? Tokens.recording-red : root.txt2;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea {
+                                clicked => { root.show-error-log = !root.show-error-log; }
+                                mouse-cursor: MouseCursor.pointer;
+                            }
+                        }
+
+                        // 設定按鈕
+                        Rectangle {
+                            width: 32px; height: 32px;
+                            border-radius: Tokens.radius-sm;
+                            background: root.settings-open ? root.acc : root.bg3;
+                            animate background { duration: Tokens.anim-fast; }
+                            Text {
+                                text: "⚙";
+                                font-size: 14px;
+                                color: root.settings-open ? white : root.txt2;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea {
+                                clicked => { root.settings-open = !root.settings-open; }
+                                mouse-cursor: MouseCursor.pointer;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 模式 tabs（即時 / 檔案）
+            Rectangle {
+                height: 38px;
+                background: root.bg2;
+                Rectangle {
+                    y: parent.height - 1px; height: 1px;
+                    background: root.border-c;
+                }
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 4px;
+                    alignment: start;
+
+                    Rectangle {
+                        property <bool> active: !root.file-mode;
+                        width: 80px; height: parent.height;
+                        Rectangle {
+                            y: parent.height - 2px; height: 2px;
+                            background: active ? root.acc : transparent;
+                        }
+                        Text {
+                            text: "🎙  即時";
+                            font-size: Tokens.font-sm;
+                            font-weight: active ? 600 : 400;
+                            color: active ? root.acc : root.txt2;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        TouchArea { clicked => { root.file-mode = false; } }
+                    }
+                    Rectangle {
+                        property <bool> active: root.file-mode;
+                        width: 80px; height: parent.height;
+                        Rectangle {
+                            y: parent.height - 2px; height: 2px;
+                            background: active ? root.acc : transparent;
+                        }
+                        Text {
+                            text: "📄  檔案";
+                            font-size: Tokens.font-sm;
+                            font-weight: active ? 600 : 400;
+                            color: active ? root.acc : root.txt2;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        TouchArea { clicked => { root.file-mode = true; } }
+                    }
+                }
+            }
+
+            // 即時模式內容
+            if !root.file-mode && root.mod-context: ContextBar {
+                selected-id: root.current-template;
+                templates: root.templates;
+                template-selected(id) => {
+                    root.current-template = id;
+                    root.template-selected(id);
+                }
+            }
+            if !root.file-mode && root.mod-waveform: WaveformView {
+                audio-level: root.audio-level;
+                recording: root.is-recording;
+                bar-levels: root.waveform-bars;
+            }
+            if !root.file-mode: TranscriptView {
+                segments: root.transcript-segments;
+                current-partial: root.current-partial;
+                is-processing: root.is-processing;
+                vertical-stretch: 1;
+            }
+
+            // 檔案模式
+            if root.file-mode: FileModeView {
+                vertical-stretch: 1;
+                bg: root.bg;
+                bg2: root.bg2;
+                text-col: root.txt;
+                text2-col: root.txt2;
+                border-col: root.border-c;
+                acc: root.acc;
+                file-name <=> root.file-name;
+                progress <=> root.file-progress;
+                processing <=> root.file-processing;
+                has-result <=> root.file-has-result;
+                result-text <=> root.file-result;
+                output-format <=> root.file-output-format;
+                open-file-dialog => { root.open-file-dialog(); }
+                start-transcription => { root.start-file-transcription(); }
+                copy-result => { root.file-copy-result(); }
+                export-result(fmt) => { root.file-export-result(fmt); }
+            }
+
+            // 控制列（僅即時模式）
+            if !root.file-mode: Rectangle {
+                height: 64px;
+                background: root.bg2;
+                Rectangle {
+                    y: 0; height: 1px;
+                    background: root.border-c;
+                }
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 10px;
+                    alignment: space-between;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: center;
+
+                        // 主錄音按鈕
+                        Rectangle {
+                            width: 44px; height: 44px;
+                            border-radius: 22px;
+                            background: root.is-recording ? Tokens.recording-red : root.acc;
+                            drop-shadow-blur: root.is-recording ? 12px : 4px;
+                            drop-shadow-color: root.is-recording
+                                ? Tokens.recording-pulse
+                                : rgba(0, 113, 227, 0.3);
+                            animate background { duration: Tokens.anim-normal; }
+                            animate drop-shadow-blur { duration: 600ms; easing: ease-in-out; }
+                            Text {
+                                text: root.is-processing ? "⏳"
+                                    : root.is-recording ? "⏹"
+                                    : "●";
+                                font-size: root.is-processing ? 18px : 22px;
+                                color: white;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea {
+                                enabled: root.is-recording || !root.is-processing;
+                                pointer-event(e) => {
+                                    if (root.ptt-mode) {
+                                        if (e.kind == PointerEventKind.down && !root.is-recording) {
+                                            root.toggle-recording();
+                                        } else if (e.kind == PointerEventKind.up && root.is-recording) {
+                                            root.toggle-recording();
+                                        }
+                                    }
+                                }
+                                clicked => {
+                                    if (!root.ptt-mode) { root.toggle-recording(); }
+                                }
+                            }
+                        }
+
+                        // 清除按鈕
+                        Rectangle {
+                            width: 36px; height: 36px;
+                            border-radius: 18px;
+                            background: root.bg3;
+                            border-width: 1px;
+                            border-color: root.border-c;
+                            Text {
+                                text: "🗑";
+                                font-size: 14px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea { clicked => { root.clear-transcript(); } }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: center;
+
+                        Rectangle {
+                            width: 36px; height: 28px;
+                            border-radius: Tokens.radius-sm;
+                            background: root.clipboard-enabled
+                                ? rgba(52, 199, 89, 0.15)
+                                : root.bg3;
+                            border-width: 1px;
+                            border-color: root.clipboard-enabled
+                                ? rgba(52, 199, 89, 0.4)
+                                : root.border-c;
+                            animate background { duration: Tokens.anim-fast; }
+                            Text {
+                                text: "📋";
+                                font-size: 14px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea {
+                                clicked => { root.clipboard-enabled = !root.clipboard-enabled; }
+                            }
+                        }
+
+                        Rectangle {
+                            width: 36px; height: 28px;
+                            border-radius: Tokens.radius-sm;
+                            background: root.inject-enabled
+                                ? rgba(0, 113, 227, 0.15)
+                                : root.bg3;
+                            border-width: 1px;
+                            border-color: root.inject-enabled
+                                ? rgba(0, 113, 227, 0.4)
+                                : root.border-c;
+                            animate background { duration: Tokens.anim-fast; }
+                            Text {
+                                text: "⌨";
+                                font-size: 14px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea {
+                                clicked => { root.inject-enabled = !root.inject-enabled; }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 狀態列
+            Rectangle {
+                height: 24px;
+                background: root.bg;
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 12px;
+                    alignment: space-between;
+                    Text {
+                        text: root.status-text;
+                        font-size: Tokens.font-xs;
+                        color: root.txt2;
+                        vertical-alignment: center;
+                    }
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Text {
+                            text: "已辨識 " + root.char-count + " 字";
+                            font-size: Tokens.font-xs;
+                            color: root.txt2;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "延遲: " + root.latency-text;
+                            font-size: Tokens.font-xs;
+                            color: root.txt2;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.model-name;
+                            font-size: Tokens.font-xs;
+                            color: root.acc;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { width: 1px; height: 12px; background: root.border-c; }
+                        Text {
+                            text: root.device-label;
+                            font-size: Tokens.font-xs;
+                            color: root.device-label == "CPU" ? root.txt2 : Tokens.recording-red;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { width: 1px; height: 12px; background: root.border-c; }
+                        Text {
+                            text: "⌨ " + root.hotkey;
+                            font-size: Tokens.font-xs;
+                            color: root.txt2;
+                            vertical-alignment: center;
+                        }
+                        if root.ptt-mode: Rectangle { width: 1px; height: 12px; background: root.border-c; }
+                        if root.ptt-mode: Text {
+                            text: "🎤 " + root.ptt-hotkey;
+                            font-size: Tokens.font-xs;
+                            color: Tokens.recording-red;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 模式 B：浮動視窗（floating-mode = true）
+    // ═══════════════════════════════════════════════════════════
+    if root.floating-mode: Rectangle {
+        x: 0; y: 0;
+        width: root.width;
+        height: root.height;
+
+        property <color> g-bg:       root.dark-mode ? GlassDark.glass-bg-strong : Tokens.glass-bg-strong;
+        property <color> g-hairline: root.dark-mode ? GlassDark.glass-hairline  : Tokens.glass-hairline;
+
+        background: g-bg;
+        border-radius: 14px;
+        border-width: 1px;
+        border-color: root.stroke;
+        clip: true;
+
+        VerticalLayout {
+            // Compact 頂部條
+            HorizontalLayout {
+                height: 52px;
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 8px;
+                alignment: stretch;
+
+                // 拖曳把手
+                Rectangle {
+                    width: 6px;
+                    y: (parent.height - self.height) / 2;
+                    height: 24px;
+                    border-radius: 3px;
+                    background: g-hairline;
+                    TouchArea {
+                        moved => { root.start-drag(); }
+                        mouse-cursor: MouseCursor.move;
+                    }
+                }
+
+                // 錄音按鈕
+                Rectangle {
+                    y: (parent.height - self.height) / 2;
+                    width: 36px; height: 36px;
+                    border-radius: 18px;
+                    background: root.is-recording ? Tokens.recording-red : root.acc;
+                    drop-shadow-blur: root.is-recording ? 14px : 5px;
+                    drop-shadow-color: root.is-recording
+                        ? Tokens.recording-pulse
+                        : rgba(0, 113, 227, 0.35);
+                    animate background { duration: Tokens.anim-normal; }
+                    Text {
+                        text: root.is-processing ? "⏳"
+                            : root.is-recording ? "■"
+                            : "●";
+                        font-size: 16px;
+                        color: white;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    TouchArea {
+                        enabled: root.is-recording || !root.is-processing;
+                        pointer-event(e) => {
+                            if (root.ptt-mode) {
+                                if (e.kind == PointerEventKind.down && !root.is-recording) {
+                                    root.toggle-recording();
+                                } else if (e.kind == PointerEventKind.up && root.is-recording) {
+                                    root.toggle-recording();
+                                }
+                            }
+                        }
+                        clicked => {
+                            if (!root.ptt-mode) { root.toggle-recording(); }
+                        }
+                    }
+                }
+
+                // mini waveform
+                Rectangle {
+                    width: 84px;
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        for i in 24: Rectangle {
+                            width: 2px;
+                            height: root.is-recording
+                                ? max(3px, root.waveform-bars[mod(i, 24)] * 28px)
+                                : 3px;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: 1px;
+                            background: root.is-recording
+                                ? @linear-gradient(180deg, root.acc, #5ac8fa)
+                                : root.txt2;
+                            animate height { duration: 70ms; easing: ease-out; }
+                        }
+                    }
+                }
+
+                // 即時文字
+                Rectangle {
+                    horizontal-stretch: 1;
+                    clip: true;
+                    Text {
+                        x: 0; width: parent.width; height: parent.height;
+                        text: root.current-partial != ""
+                            ? root.current-partial
+                            : root.status-text;
+                        font-size: Tokens.font-sm;
+                        font-weight: root.current-partial != "" ? 500 : 400;
+                        color: root.current-partial != "" ? root.txt : root.txt2;
+                        vertical-alignment: center;
+                        horizontal-alignment: left;
+                        overflow: elide;
+                        wrap: no-wrap;
+                    }
+                }
+
+                // 工具列
+                HorizontalLayout {
+                    spacing: 2px;
+                    alignment: center;
+
+                    // 設定（floating 模式也能開）
+                    Rectangle {
+                        width: 26px; height: 26px;
+                        border-radius: 7px;
+                        background: root.settings-open ? root.acc : transparent;
+                        Text {
+                            text: "⚙";
+                            font-size: 13px;
+                            color: root.settings-open ? white : root.txt2;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        TouchArea {
+                            clicked => {
+                                // 開設定自動展開
+                                if (!root.settings-open) {
+                                    root.floating-expanded = true;
+                                    root.toggle-floating-expanded();
+                                }
+                                root.settings-open = !root.settings-open;
+                            }
+                            mouse-cursor: MouseCursor.pointer;
+                        }
+                    }
+
+                    // 展開 / 收合
+                    Rectangle {
+                        width: 26px; height: 26px;
+                        border-radius: 7px;
+                        Text {
+                            text: root.floating-expanded ? "˄" : "˅";
+                            font-size: 15px;
+                            color: root.txt2;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        TouchArea {
+                            clicked => {
+                                root.floating-expanded = !root.floating-expanded;
+                                root.toggle-floating-expanded();
+                            }
+                            mouse-cursor: MouseCursor.pointer;
+                        }
+                    }
+
+                    // 切回完整視窗
+                    Rectangle {
+                        width: 26px; height: 26px;
+                        border-radius: 7px;
+                        Text {
+                            text: "⛶";
+                            font-size: 12px;
+                            color: root.txt2;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        TouchArea {
+                            clicked => {
+                                root.floating-mode = false;
+                                root.toggle-floating-mode();
+                            }
+                            mouse-cursor: MouseCursor.pointer;
+                        }
+                    }
+
+                    // 關閉
+                    Rectangle {
+                        width: 26px; height: 26px;
+                        border-radius: 7px;
+                        Text {
+                            text: "✕";
+                            font-size: 12px;
+                            color: root.txt2;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        TouchArea {
+                            clicked => { root.request-close(); }
+                            mouse-cursor: MouseCursor.pointer;
+                        }
+                    }
+                }
+            }
+
+            // 展開內容（floating-expanded = true 時顯示）
+            if root.floating-expanded: Rectangle {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    QuickActions {
+                        dark-mode: root.dark-mode;
+                        current-template: root.current-template;
+                        model-name: root.model-name;
+                        device-label: root.device-label;
+                        latency-text: root.latency-text;
+                        char-count: root.char-count;
+                        error-count: root.error-log.length;
+                        clipboard-enabled: root.clipboard-enabled;
+                        inject-enabled: root.inject-enabled;
+                        open-template-menu => { /* ContextBar 已顯示 */ }
+                        open-model-menu => { root.open-model-manager(); }
+                        toggle-clipboard => { root.clipboard-enabled = !root.clipboard-enabled; }
+                        toggle-inject => { root.inject-enabled = !root.inject-enabled; }
+                        clear-transcript => { root.clear-transcript(); }
+                        show-error-log => { root.show-error-log = !root.show-error-log; }
+                    }
+
+                    if !root.file-mode && root.mod-context: ContextBar {
+                        selected-id: root.current-template;
+                        templates: root.templates;
+                        template-selected(id) => {
+                            root.current-template = id;
+                            root.template-selected(id);
+                        }
+                    }
+                    if !root.file-mode && root.mod-waveform: WaveformView {
+                        audio-level: root.audio-level;
+                        recording: root.is-recording;
+                        bar-levels: root.waveform-bars;
+                    }
+                    if !root.file-mode: TranscriptView {
+                        segments: root.transcript-segments;
+                        current-partial: root.current-partial;
+                        is-processing: root.is-processing;
+                        vertical-stretch: 1;
+                    }
+                    if root.file-mode: FileModeView {
+                        vertical-stretch: 1;
+                        bg: g-bg;
+                        bg2: root.bg2;
+                        text-col: root.txt;
+                        text2-col: root.txt2;
+                        border-col: g-hairline;
+                        acc: root.acc;
+                        file-name <=> root.file-name;
+                        progress <=> root.file-progress;
+                        processing <=> root.file-processing;
+                        has-result <=> root.file-has-result;
+                        result-text <=> root.file-result;
+                        output-format <=> root.file-output-format;
+                        open-file-dialog => { root.open-file-dialog(); }
+                        start-transcription => { root.start-file-transcription(); }
+                        copy-result => { root.file-copy-result(); }
+                        export-result(fmt) => { root.file-export-result(fmt); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 錯誤紀錄浮層（兩模式共用）
+    // ═══════════════════════════════════════════════════════════
+    if root.show-error-log: Rectangle {
+        x: 0; y: 0;
+        width: root.width; height: root.height;
+        background: rgba(0,0,0,0.45);
+        TouchArea { clicked => { root.show-error-log = false; } }
+
+        Rectangle {
+            width: min(parent.width - 32px, 480px);
+            height: min(parent.height - 80px, 420px);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: root.bg2;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: root.border-c;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: rgba(0,0,0,0.5);
+
+            VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
+                HorizontalLayout {
+                    alignment: space-between;
+                    Text {
+                        text: "⚠ 錯誤紀錄 (" + root.error-log.length + ")";
+                        font-size: Tokens.font-md;
+                        font-weight: 600;
+                        color: root.txt;
+                    }
+                    HorizontalLayout {
+                        spacing: 4px;
+                        Rectangle {
+                            width: 60px; height: 24px;
+                            border-radius: 6px;
+                            background: rgba(255,59,48,0.12);
+                            Text {
+                                text: "清空";
+                                font-size: Tokens.font-xs;
+                                color: Tokens.recording-red;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea { clicked => { root.clear-error-log(); } }
+                        }
+                        Rectangle {
+                            width: 50px; height: 24px;
+                            border-radius: 6px;
+                            background: root.bg3;
+                            Text {
+                                text: "關閉";
+                                font-size: Tokens.font-xs;
+                                color: root.txt2;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea { clicked => { root.show-error-log = false; } }
+                        }
+                    }
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: root.bg;
+                    border-radius: 8px;
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 4px;
+                        for entry in root.error-log: Text {
+                            text: "• " + entry;
+                            font-size: Tokens.font-xs;
+                            color: root.txt2;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 設定面板（兩模式共用，全視窗覆蓋）
+    // ═══════════════════════════════════════════════════════════
+    if root.settings-open: SettingsPanel {
+        x: 0; y: 0;
+        width: root.width; height: root.height;
+        mod-vad <=> root.mod-vad;
+        mod-context <=> root.mod-context;
+        mod-opencc <=> root.mod-opencc;
+        mod-inject <=> root.mod-inject;
+        mod-waveform <=> root.mod-waveform;
+        mod-history <=> root.mod-history;
+        vad-threshold <=> root.vad-threshold;
+        silence-timeout <=> root.silence-timeout;
+        n-threads <=> root.n-threads;
+        use-gpu <=> root.use-gpu;
+        temperature <=> root.temperature;
+        conversion-mode <=> root.conversion-mode;
+        append-newline <=> root.append-newline;
+        hotkey <=> root.hotkey;
+        ptt-hotkey <=> root.ptt-hotkey;
+        ptt-mode <=> root.ptt-mode;
+        model-entries: root.model-entries;
+        selected-model-id <=> root.selected-model-id;
+        downloading-id: root.downloading-id;
+        download-progress: root.download-progress;
+        template-entries <=> root.template-entries;
+        save-status <=> root.save-status;
+        settings-changed => { root.settings-changed(); }
+        save-settings => { root.save-settings(); }
+        open-model-manager => { root.open-model-manager(); }
+        model-select-or-download(id) => { root.model-select-or-download(id); }
+        template-save(orig, name, prompt) => { root.template-save(orig, name, prompt); }
+        template-delete(name) => { root.template-delete(name); }
+        close => { root.settings-open = false; }
+    }
+}

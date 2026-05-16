@@ -1,0 +1,114 @@
+// Design Tokens — macOS 風格設計系統
+
+export global Tokens {
+    // 顏色 — 淺色主題
+    out property <color> bg-primary: #f5f5f7;
+    out property <color> bg-secondary: #ffffff;
+    out property <color> bg-tertiary: #e8e8ed;
+    out property <color> bg-overlay: rgba(255, 255, 255, 0.72);
+
+    out property <color> text-primary: #1d1d1f;
+    out property <color> text-secondary: #6e6e73;
+    out property <color> text-placeholder: #aeaeb2;
+
+    out property <color> accent: #0071e3;
+    out property <color> accent-hover: #0077ed;
+    out property <color> accent-pressed: #006edb;
+
+    out property <color> danger: #ff3b30;
+    out property <color> success: #34c759;
+    out property <color> warning: #ff9f0a;
+
+    out property <color> border: rgba(0, 0, 0, 0.1);
+    out property <color> border-strong: rgba(0, 0, 0, 0.2);
+
+    out property <color> recording-red: #ff3b30;
+    out property <color> recording-pulse: rgba(255, 59, 48, 0.3);
+
+    // 圓角
+    out property <length> radius-sm: 6px;
+    out property <length> radius-md: 10px;
+    out property <length> radius-lg: 16px;
+    out property <length> radius-xl: 22px;
+    out property <length> radius-pill: 999px;
+
+    // 間距
+    out property <length> space-xs: 4px;
+    out property <length> space-sm: 8px;
+    out property <length> space-md: 12px;
+    out property <length> space-lg: 16px;
+    out property <length> space-xl: 24px;
+    out property <length> space-2xl: 32px;
+
+    // 字體大小
+    out property <length> font-xs: 11px;
+    out property <length> font-sm: 13px;
+    out property <length> font-md: 15px;
+    out property <length> font-lg: 17px;
+    out property <length> font-xl: 20px;
+    out property <length> font-title: 24px;
+
+    // 陰影（模擬毛玻璃邊框）
+    out property <brush> shadow-card: @linear-gradient(145deg, rgba(255,255,255,0.8), rgba(240,240,245,0.6));
+
+    // 動畫時間
+    out property <duration> anim-fast: 120ms;
+    out property <duration> anim-normal: 200ms;
+    out property <duration> anim-slow: 350ms;
+
+    // ── v2.0 Liquid Glass 新增 ────────────────────────────────
+    out property <color> glass-bg:        rgba(255, 255, 255, 0.62);
+    out property <color> glass-bg-strong: rgba(255, 255, 255, 0.82);
+    out property <color> glass-stroke:    rgba(255, 255, 255, 0.55);
+    out property <color> glass-hairline:  rgba(0, 0, 0, 0.06);
+    out property <color> glass-shadow:    rgba(0, 0, 0, 0.18);
+    out property <brush> glass-sheen:     @linear-gradient(180deg,
+                                            rgba(255,255,255,0.55) 0%,
+                                            rgba(255,255,255,0.05) 60%,
+                                            rgba(255,255,255,0.0)  100%);
+    out property <brush> glass-ambient:   @linear-gradient(135deg,
+                                            rgba(0, 113, 227, 0.06) 0%,
+                                            rgba(255, 255, 255, 0) 55%,
+                                            rgba(90, 200, 250, 0.08) 100%);
+
+    out property <color> chip-bg:         rgba(0, 0, 0, 0.045);
+    out property <color> chip-bg-active:  rgba(0, 113, 227, 0.14);
+
+    // 緊湊版尺寸
+    out property <length> bar-h:          52px;   // 摺疊高度
+    out property <length> bar-w:          380px;  // 標準寬度
+    out property <length> exp-h:          540px;  // 展開高度
+}
+
+export global GlassDark {
+    out property <color> glass-bg:        rgba(28, 28, 30, 0.66);
+    out property <color> glass-bg-strong: rgba(28, 28, 30, 0.88);
+    out property <color> glass-stroke:    rgba(255, 255, 255, 0.10);
+    out property <color> glass-hairline:  rgba(255, 255, 255, 0.07);
+    out property <color> glass-shadow:    rgba(0, 0, 0, 0.55);
+    out property <brush> glass-sheen:     @linear-gradient(180deg,
+                                            rgba(255,255,255,0.10) 0%,
+                                            rgba(255,255,255,0.02) 60%,
+                                            rgba(255,255,255,0.0)  100%);
+    out property <brush> glass-ambient:   @linear-gradient(135deg,
+                                            rgba(10, 132, 255, 0.10) 0%,
+                                            rgba(0, 0, 0, 0) 55%,
+                                            rgba(90, 200, 250, 0.12) 100%);
+    out property <color> chip-bg:         rgba(255, 255, 255, 0.06);
+    out property <color> chip-bg-active:  rgba(10, 132, 255, 0.22);
+}
+
+export global DarkTokens {
+    out property <color> bg-primary: #1c1c1e;
+    out property <color> bg-secondary: #2c2c2e;
+    out property <color> bg-tertiary: #3a3a3c;
+    out property <color> bg-overlay: rgba(28, 28, 30, 0.72);
+
+    out property <color> text-primary: #f5f5f7;
+    out property <color> text-secondary: #98989d;
+    out property <color> text-placeholder: #636366;
+
+    out property <color> accent: #0a84ff;
+    out property <color> border: rgba(255, 255, 255, 0.1);
+    out property <color> border-strong: rgba(255, 255, 255, 0.18);
+}

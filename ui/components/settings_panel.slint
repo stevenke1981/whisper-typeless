@@ -1,0 +1,755 @@
+import { Tokens } from "../styles/tokens.slint";
+import { Toggle } from "toggle.slint";
+import { ScrollView, Slider, TextEdit } from "std-widgets.slint";
+
+export struct ModelEntry {
+    id: string,
+    display-name: string,
+    is-downloaded: bool,
+    size-mb: int,
+    quality: int,
+}
+
+export struct TemplateEditEntry {
+    name: string,
+    prompt: string,
+    is-builtin: bool,
+}
+
+struct ModeOption { id: string, label: string }
+
+component SectionHeader {
+    in property <string> title;
+    height: 32px;
+
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Tokens.border;
+    }
+
+    Text {
+        text: title;
+        font-size: Tokens.font-xs;
+        font-weight: 600;
+        color: Tokens.text-secondary;
+        vertical-alignment: center;
+    }
+}
+
+component ModuleToggleRow {
+    in property <string> label;
+    in-out property <bool> checked;
+    callback changed();
+    height: 40px;
+
+    HorizontalLayout {
+        alignment: space-between;
+
+        Text {
+            text: root.label;
+            font-size: Tokens.font-sm;
+            color: Tokens.text-primary;
+            vertical-alignment: center;
+        }
+
+        Toggle {
+            checked <=> root.checked;
+            toggled(_) => { root.changed(); }
+        }
+    }
+}
+
+export component SettingsPanel {
+    // 音訊設定
+    in-out property <float> vad-threshold: 0.6;
+    in-out property <float> silence-timeout: 1500;
+
+    // Whisper 設定
+    in-out property <int> n-threads: 4;
+    in-out property <bool> use-gpu: true;
+    in-out property <float> temperature: 0.0;
+    in-out property <string> decoding-strategy: "greedy";
+
+    // 快捷鍵設定
+    in-out property <string> hotkey: "Ctrl+Shift+W";
+    in-out property <string> ptt-hotkey: "Ctrl+Alt+L";
+    in-out property <bool> ptt-mode: true;
+
+    // 中文設定
+    in-out property <string> conversion-mode: "zh-TW";
+
+    // 模組開關
+    in-out property <bool> mod-vad: true;
+    in-out property <bool> mod-context: true;
+    in-out property <bool> mod-opencc: true;
+    in-out property <bool> mod-inject: true;
+    in-out property <bool> mod-waveform: true;
+    in-out property <bool> mod-history: true;
+
+    // 輸出設定
+    in-out property <bool> append-newline: true;
+
+    // 模型
+    in property <[ModelEntry]> model-entries: [];
+    in-out property <string> selected-model-id: "small";
+    in property <string> downloading-id: "";
+    in property <float> download-progress: 0.0;
+
+    // 情境模板編輯
+    in-out property <[TemplateEditEntry]> template-entries: [];
+
+    // 內部狀態（不需要從外部傳入）
+    private property <int> template-sel-idx: -1;
+    private property <bool> template-edit-visible: false;
+    private property <bool> template-sel-is-builtin: false;
+    private property <string> template-sel-original-name: "";
+    private property <string> template-edit-name: "";
+    private property <string> template-edit-prompt: "";
+
+    // 儲存回饋
+    in-out property <string> save-status: "";
+
+    // Callbacks
+    callback settings-changed();
+    callback save-settings();
+    callback open-model-manager();
+    callback model-select-or-download(string);
+    callback template-save(string, string, string);  // original-name, new-name, prompt
+    callback template-delete(string);
+    callback close();
+
+    Rectangle {
+        background: Tokens.bg-overlay;
+        drop-shadow-blur: 20px;
+        drop-shadow-color: rgba(0, 0, 0, 0.15);
+
+        VerticalLayout {
+            // ── 標題列 ────────────────────────────────────────
+            Rectangle {
+                height: 52px;
+                background: Tokens.bg-secondary;
+
+                Rectangle {
+                    y: parent.height - 1px;
+                    height: 1px;
+                    background: Tokens.border;
+                }
+
+                HorizontalLayout {
+                    padding-left: 20px;
+                    padding-right: 16px;
+                    alignment: space-between;
+
+                    Text {
+                        text: "⚙  設定";
+                        font-size: Tokens.font-lg;
+                        font-weight: 600;
+                        color: Tokens.text-primary;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle {
+                        width: 32px;
+                        height: 32px;
+                        border-radius: Tokens.radius-sm;
+                        background: Tokens.bg-tertiary;
+                        border-width: 1px;
+                        border-color: Tokens.border;
+
+                        Text {
+                            text: "✕";
+                            font-size: 14px;
+                            color: Tokens.text-secondary;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            clicked => { root.close(); }
+                        }
+                    }
+                }
+            }
+
+            // ── 主體（雙欄佈局）──────────────────────────────
+            ScrollView {
+                vertical-stretch: 1;
+
+                HorizontalLayout {
+                    padding: 20px;
+                    spacing: 24px;
+                    alignment: start;
+
+                    // ── 左欄：基本設定 ─────────────────────────
+                    VerticalLayout {
+                        width: 260px;
+                        spacing: 0px;
+
+                        // ── 音訊 ──────────────────────────────
+                        SectionHeader { title: "音訊"; }
+
+                        Rectangle {
+                            height: 48px;
+                            HorizontalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: "VAD 閾值";
+                                    font-size: Tokens.font-sm;
+                                    color: Tokens.text-primary;
+                                    vertical-alignment: center;
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    width: 120px;
+                                    Slider {
+                                        value: root.vad-threshold;
+                                        minimum: 0.1;
+                                        maximum: 0.9;
+                                        changed(v) => {
+                                            root.vad-threshold = v;
+                                            root.settings-changed();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ── Whisper 引擎 ───────────────────────
+                        SectionHeader { title: "Whisper 引擎"; }
+
+                        Rectangle {
+                            height: 44px;
+                            HorizontalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: "使用 GPU";
+                                    font-size: Tokens.font-sm;
+                                    color: Tokens.text-primary;
+                                    vertical-alignment: center;
+                                }
+                                Toggle {
+                                    checked: root.use-gpu;
+                                    toggled(v) => {
+                                        root.use-gpu = v;
+                                        root.settings-changed();
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            height: 48px;
+                            HorizontalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: "溫度";
+                                    font-size: Tokens.font-sm;
+                                    color: Tokens.text-primary;
+                                    vertical-alignment: center;
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    width: 120px;
+                                    Slider {
+                                        value: root.temperature;
+                                        minimum: 0.0;
+                                        maximum: 1.0;
+                                        changed(v) => {
+                                            root.temperature = v;
+                                            root.settings-changed();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ── 快捷鍵 ────────────────────────────
+                        SectionHeader { title: "快捷鍵"; }
+
+                        Rectangle {
+                            height: 44px;
+                            HorizontalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: "錄音快捷鍵";
+                                    font-size: Tokens.font-sm;
+                                    color: Tokens.text-primary;
+                                    vertical-alignment: center;
+                                }
+                                Rectangle {
+                                    width: 130px;
+                                    height: 28px;
+                                    border-radius: Tokens.radius-sm;
+                                    border-width: 1px;
+                                    border-color: Tokens.border;
+                                    background: Tokens.bg-secondary;
+                                    TextInput {
+                                        x: 6px;
+                                        width: parent.width - 12px;
+                                        font-size: Tokens.font-xs;
+                                        color: Tokens.text-primary;
+                                        text <=> root.hotkey;
+                                        edited => { root.settings-changed(); }
+                                    }
+                                }
+                            }
+                        }
+
+                        ModuleToggleRow {
+                            label: "按住錄音 (PTT)";
+                            checked <=> root.ptt-mode;
+                            changed => { root.settings-changed(); }
+                        }
+
+                        Rectangle {
+                            height: 44px;
+                            HorizontalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: "PTT 快捷鍵";
+                                    font-size: Tokens.font-sm;
+                                    color: Tokens.text-primary;
+                                    vertical-alignment: center;
+                                }
+                                Rectangle {
+                                    width: 130px;
+                                    height: 28px;
+                                    border-radius: Tokens.radius-sm;
+                                    border-width: 1px;
+                                    border-color: Tokens.border;
+                                    background: Tokens.bg-secondary;
+                                    TextInput {
+                                        x: 6px;
+                                        width: parent.width - 12px;
+                                        font-size: Tokens.font-xs;
+                                        color: Tokens.text-primary;
+                                        text <=> root.ptt-hotkey;
+                                        edited => { root.settings-changed(); }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ── 中文處理 ──────────────────────────
+                        SectionHeader { title: "中文處理"; }
+
+                        Rectangle {
+                            height: 40px;
+                            HorizontalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: "繁簡轉換";
+                                    font-size: Tokens.font-sm;
+                                    color: Tokens.text-primary;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
+                        // 轉換模式選擇按鈕
+                        Rectangle {
+                            height: 36px;
+                            HorizontalLayout {
+                                spacing: 4px;
+                                alignment: start;
+
+                                for opt in [
+                                    { id: "zh-TW", label: "繁（台）" },
+                                    { id: "zh-HK", label: "繁（港）" },
+                                    { id: "zh-CN", label: "簡體" },
+                                    { id: "raw",   label: "原文" },
+                                ]: Rectangle {
+                                    property <bool> active: root.conversion-mode == opt.id;
+                                    width: 58px;
+                                    height: 28px;
+                                    border-radius: Tokens.radius-sm;
+                                    background: active ? Tokens.accent : Tokens.bg-tertiary;
+                                    border-width: 1px;
+                                    border-color: active ? Tokens.accent : Tokens.border;
+                                    animate background { duration: Tokens.anim-fast; }
+
+                                    Text {
+                                        text: opt.label;
+                                        font-size: 10px;
+                                        color: active ? white : Tokens.text-secondary;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        animate color { duration: Tokens.anim-fast; }
+                                    }
+
+                                    TouchArea {
+                                        clicked => {
+                                            root.conversion-mode = opt.id;
+                                            root.settings-changed();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ── 功能模組 ──────────────────────────
+                        SectionHeader { title: "功能模組"; }
+
+                        ModuleToggleRow { label: "靜音偵測"; checked <=> root.mod-vad; changed => { root.settings-changed(); } }
+                        ModuleToggleRow { label: "情境模板"; checked <=> root.mod-context; changed => { root.settings-changed(); } }
+                        ModuleToggleRow { label: "繁簡轉換"; checked <=> root.mod-opencc; changed => { root.settings-changed(); } }
+                        ModuleToggleRow { label: "自動注入"; checked <=> root.mod-inject; changed => { root.settings-changed(); } }
+                        ModuleToggleRow { label: "波形顯示"; checked <=> root.mod-waveform; changed => { root.settings-changed(); } }
+                        ModuleToggleRow { label: "歷史記錄"; checked <=> root.mod-history; changed => { root.settings-changed(); } }
+
+                        // ── 儲存按鈕 ──────────────────────────
+                        Rectangle { height: 16px; }
+
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: 10px;
+                            height: 40px;
+
+                            Rectangle {
+                                width: 120px;
+                                height: 32px;
+                                border-radius: Tokens.radius-sm;
+                                background: Tokens.accent;
+                                drop-shadow-blur: 4px;
+                                drop-shadow-color: rgba(0, 113, 227, 0.3);
+
+                                Text {
+                                    text: "💾  儲存設定";
+                                    color: white;
+                                    font-size: Tokens.font-sm;
+                                    font-weight: 500;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+
+                                TouchArea {
+                                    clicked => { root.save-settings(); }
+                                }
+                            }
+
+                            if root.save-status != "": Text {
+                                text: root.save-status;
+                                color: root.save-status == "✓ 已儲存"
+                                    ? Tokens.success
+                                    : Tokens.danger;
+                                font-size: Tokens.font-sm;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Rectangle { height: 16px; }
+                    }
+
+                    // ── 右欄：情境模板 + 模型 ────────────────
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 0px;
+
+                        // ── 情境模板 ──────────────────────────
+                        SectionHeader { title: "情境模板"; }
+
+                        // 模板列表
+                        for t[i] in root.template-entries: Rectangle {
+                            property <bool> sel: i == root.template-sel-idx;
+                            height: 38px;
+
+                            Rectangle {
+                                y: 2px;
+                                height: parent.height - 4px;
+                                border-radius: Tokens.radius-sm;
+                                background: sel ? rgba(0, 113, 227, 0.07) : transparent;
+                                border-width: sel ? 1px : 0;
+                                border-color: rgba(0, 113, 227, 0.25);
+                            }
+
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                alignment: space-between;
+
+                                Text {
+                                    text: t.name;
+                                    font-size: Tokens.font-sm;
+                                    font-weight: sel ? 600 : 400;
+                                    color: sel ? Tokens.accent : Tokens.text-primary;
+                                    vertical-alignment: center;
+                                }
+
+                                if t.is-builtin: Text {
+                                    text: "內建";
+                                    font-size: 9px;
+                                    color: Tokens.text-secondary;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            Rectangle {
+                                y: parent.height - 1px;
+                                height: 1px;
+                                background: Tokens.border;
+                                opacity: 0.4;
+                            }
+
+                            TouchArea {
+                                clicked => {
+                                    root.template-sel-idx = i;
+                                    root.template-edit-name = t.name;
+                                    root.template-edit-prompt = t.prompt;
+                                    root.template-sel-is-builtin = t.is-builtin;
+                                    root.template-sel-original-name = t.name;
+                                    root.template-edit-visible = true;
+                                }
+                            }
+                        }
+
+                        // 新增模板按鈕
+                        Rectangle {
+                            height: 34px;
+                            border-radius: Tokens.radius-sm;
+                            border-width: 1px;
+                            border-color: Tokens.border;
+                            background: Tokens.bg-secondary;
+
+                            Text {
+                                text: "+ 新增模板";
+                                font-size: Tokens.font-xs;
+                                color: Tokens.text-secondary;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => {
+                                    root.template-sel-idx = -1;
+                                    root.template-sel-is-builtin = false;
+                                    root.template-sel-original-name = "";
+                                    root.template-edit-name = "新模板";
+                                    root.template-edit-prompt = "";
+                                    root.template-edit-visible = true;
+                                }
+                            }
+                        }
+
+                        // 模板編輯表單（選取或新增後顯示）
+                        if root.template-edit-visible: VerticalLayout {
+                            spacing: 6px;
+                            padding-top: 12px;
+                            padding-bottom: 8px;
+
+                            Text {
+                                text: "模板名稱";
+                                font-size: Tokens.font-xs;
+                                color: Tokens.text-secondary;
+                                height: 16px;
+                            }
+
+                            Rectangle {
+                                height: 30px;
+                                border-radius: Tokens.radius-sm;
+                                border-width: 1px;
+                                border-color: Tokens.border;
+                                background: root.template-sel-is-builtin
+                                    ? Tokens.bg-tertiary : Tokens.bg-secondary;
+                                TextInput {
+                                    x: 8px;
+                                    width: parent.width - 16px;
+                                    font-size: Tokens.font-sm;
+                                    color: Tokens.text-primary;
+                                    text <=> root.template-edit-name;
+                                    enabled: !root.template-sel-is-builtin;
+                                }
+                            }
+
+                            Text {
+                                text: "提示詞";
+                                font-size: Tokens.font-xs;
+                                color: Tokens.text-secondary;
+                                height: 16px;
+                            }
+
+                            TextEdit {
+                                height: 90px;
+                                font-size: Tokens.font-sm;
+                                text <=> root.template-edit-prompt;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 6px;
+                                height: 30px;
+                                alignment: start;
+
+                                Rectangle {
+                                    width: 72px;
+                                    height: 28px;
+                                    border-radius: Tokens.radius-sm;
+                                    background: Tokens.accent;
+
+                                    Text {
+                                        text: "✓ 儲存";
+                                        font-size: Tokens.font-xs;
+                                        color: white;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+
+                                    TouchArea {
+                                        clicked => {
+                                            root.template-save(
+                                                root.template-sel-original-name,
+                                                root.template-edit-name,
+                                                root.template-edit-prompt
+                                            );
+                                        }
+                                    }
+                                }
+
+                                if !root.template-sel-is-builtin: Rectangle {
+                                    width: 56px;
+                                    height: 28px;
+                                    border-radius: Tokens.radius-sm;
+                                    background: rgba(255, 59, 48, 0.08);
+                                    border-width: 1px;
+                                    border-color: rgba(255, 59, 48, 0.3);
+
+                                    Text {
+                                        text: "🗑 刪除";
+                                        font-size: Tokens.font-xs;
+                                        color: Tokens.danger;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+
+                                    TouchArea {
+                                        clicked => {
+                                            root.template-edit-visible = false;
+                                            root.template-delete(root.template-sel-original-name);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ── 模型管理 ──────────────────────────
+                        Rectangle { height: 8px; }
+                        SectionHeader { title: "模型"; }
+
+                        for entry in root.model-entries: Rectangle {
+                            property <bool> is-sel: entry.id == root.selected-model-id;
+                            property <bool> is-dl: entry.id == root.downloading-id;
+                            height: 56px;
+
+                            Rectangle {
+                                y: 2px;
+                                height: parent.height - 4px;
+                                border-radius: Tokens.radius-sm;
+                                background: is-sel ? rgba(0, 113, 227, 0.07) : transparent;
+                                border-width: is-sel ? 1px : 0;
+                                border-color: rgba(0, 113, 227, 0.25);
+                            }
+
+                            HorizontalLayout {
+                                padding-top: 2px;
+                                padding-bottom: 2px;
+                                padding-left: 6px;
+                                padding-right: 6px;
+                                spacing: 8px;
+                                alignment: space-between;
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 3px;
+
+                                    Text {
+                                        text: entry.display-name;
+                                        font-size: Tokens.font-sm;
+                                        font-weight: is-sel ? 600 : 400;
+                                        color: is-sel ? Tokens.accent : Tokens.text-primary;
+                                    }
+
+                                    Text {
+                                        text: entry.quality + "★ · " + entry.size-mb + " MB";
+                                        font-size: Tokens.font-xs;
+                                        color: Tokens.text-secondary;
+                                    }
+                                }
+
+                                if is-dl: VerticalLayout {
+                                    alignment: center;
+                                    spacing: 3px;
+                                    width: 72px;
+
+                                    Rectangle {
+                                        height: 4px;
+                                        border-radius: 2px;
+                                        background: Tokens.bg-tertiary;
+                                        Rectangle {
+                                            x: 0;
+                                            width: root.download-progress * parent.width;
+                                            height: parent.height;
+                                            border-radius: 2px;
+                                            background: Tokens.accent;
+                                            animate width { duration: 200ms; }
+                                        }
+                                    }
+
+                                    Text {
+                                        text: Math.round(root.download-progress * 100) + "%";
+                                        font-size: Tokens.font-xs;
+                                        color: Tokens.text-secondary;
+                                        horizontal-alignment: center;
+                                    }
+                                }
+
+                                if !is-dl: Rectangle {
+                                    width: 72px;
+                                    height: 28px;
+                                    border-radius: Tokens.radius-sm;
+                                    background: is-sel
+                                        ? Tokens.accent
+                                        : (entry.is-downloaded
+                                            ? rgba(52, 199, 89, 0.12)
+                                            : Tokens.bg-tertiary);
+                                    border-width: 1px;
+                                    border-color: is-sel
+                                        ? Tokens.accent
+                                        : (entry.is-downloaded
+                                            ? rgba(52, 199, 89, 0.45)
+                                            : Tokens.border);
+                                    animate background { duration: Tokens.anim-fast; }
+
+                                    Text {
+                                        text: is-sel ? "✓ 使用中"
+                                            : (entry.is-downloaded ? "✓ 選擇" : "↓ 下載");
+                                        font-size: 11px;
+                                        color: is-sel
+                                            ? white
+                                            : (entry.is-downloaded
+                                                ? rgba(52, 199, 89, 1.0)
+                                                : Tokens.text-secondary);
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+
+                                    TouchArea {
+                                        enabled: root.downloading-id == "";
+                                        clicked => { root.model-select-or-download(entry.id); }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                y: parent.height - 1px;
+                                height: 1px;
+                                background: Tokens.border;
+                                opacity: 0.5;
+                            }
+                        }
+
+                        Rectangle { height: 16px; }
+                    }
+                }
+            }
+        }
+    }
+}

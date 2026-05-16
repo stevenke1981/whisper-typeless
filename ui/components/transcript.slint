@@ -1,0 +1,97 @@
+import { Tokens } from "../styles/tokens.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export struct TranscriptSegmentData {
+    text: string,
+    timestamp: string,
+}
+
+export component TranscriptView {
+    in property <[TranscriptSegmentData]> segments: [];
+    in property <string> current-partial: "";
+    in property <bool> is-processing: false;
+
+    ScrollView {
+        VerticalLayout {
+            padding: 16px;
+            spacing: 8px;
+            alignment: start;
+
+            for seg in root.segments: Rectangle {
+                background: Tokens.bg-secondary;
+                border-radius: Tokens.radius-md;
+                border-width: 1px;
+                border-color: Tokens.border;
+                padding: 10px;
+
+                VerticalLayout {
+                    spacing: 4px;
+                    padding: 10px;
+
+                    if seg.timestamp != "": Text {
+                        text: seg.timestamp;
+                        font-size: Tokens.font-xs;
+                        color: Tokens.text-placeholder;
+                    }
+
+                    Text {
+                        text: seg.text;
+                        font-size: Tokens.font-md;
+                        color: Tokens.text-primary;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            // 正在辨識的文字（半透明）
+            if root.current-partial != "": Rectangle {
+                background: Tokens.bg-tertiary;
+                border-radius: Tokens.radius-md;
+                border-width: 1px;
+                border-color: Tokens.border;
+                opacity: 0.7;
+
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 4px;
+
+                    Text {
+                        text: root.is-processing ? "辨識中..." : "等待聲音...";
+                        font-size: Tokens.font-xs;
+                        color: Tokens.accent;
+                    }
+
+                    Text {
+                        text: root.current-partial;
+                        font-size: Tokens.font-md;
+                        color: Tokens.text-secondary;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            // 空白提示
+            if root.segments.length == 0 && root.current-partial == "": Rectangle {
+                height: 120px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 8px;
+
+                    Text {
+                        text: "🎙";
+                        font-size: 40px;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "按下錄音按鈕開始語音輸入";
+                        font-size: Tokens.font-md;
+                        color: Tokens.text-placeholder;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}

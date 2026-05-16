@@ -1,0 +1,43 @@
+import { Tokens } from "../styles/tokens.slint";
+
+export component WaveformView {
+    in property <float> audio-level: 0.0;
+    in property <bool> recording: false;
+    in property <[float]> bar-levels: [0.1, 0.3, 0.6, 0.4, 0.8, 0.5, 0.3, 0.7, 0.2, 0.5,
+                                        0.9, 0.4, 0.6, 0.3, 0.7, 0.5, 0.2, 0.8, 0.4, 0.6];
+
+    height: 56px;
+
+    Rectangle {
+        background: transparent;
+
+        // 中央基準線
+        Rectangle {
+            y: parent.height / 2 - 0.5px;
+            height: 1px;
+            background: Tokens.border;
+        }
+
+        // 波形棒（用多個 Rectangle 模擬）
+        HorizontalLayout {
+            alignment: center;
+            spacing: 3px;
+            padding-left: 8px;
+            padding-right: 8px;
+
+            for i in 20: Rectangle {
+                width: 3px;
+                height: root.recording
+                    ? max(4px, root.bar-levels[mod(i, 20)] * 48px)
+                    : 4px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 1.5px;
+                background: root.recording
+                    ? @linear-gradient(180deg, Tokens.accent, #5ac8fa)
+                    : Tokens.text-placeholder;
+                animate height { duration: 80ms; easing: ease-out; }
+                animate background { duration: Tokens.anim-normal; }
+            }
+        }
+    }
+}

@@ -1,0 +1,39 @@
+import { Tokens } from "../styles/tokens.slint";
+
+export component Toggle {
+    in-out property <bool> checked: false;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+
+    width: 44px;
+    height: 26px;
+
+    Rectangle {
+        border-radius: 13px;
+        background: root.checked
+            ? (root.enabled ? Tokens.accent : #a8c8f0)
+            : (root.enabled ? Tokens.bg-tertiary : #d1d1d6);
+        animate background { duration: Tokens.anim-normal; easing: ease; }
+
+        Rectangle {
+            x: root.checked ? 20px : 2px;
+            y: 2px;
+            width: 22px;
+            height: 22px;
+            border-radius: 11px;
+            background: white;
+            drop-shadow-blur: 2px;
+            drop-shadow-color: rgba(0,0,0,0.15);
+            drop-shadow-offset-y: 1px;
+            animate x { duration: Tokens.anim-normal; easing: ease-out; }
+        }
+    }
+
+    TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled(root.checked);
+        }
+    }
+}

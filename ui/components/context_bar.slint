@@ -1,0 +1,73 @@
+import { Tokens } from "../styles/tokens.slint";
+
+export struct TemplateItem {
+    id: string,
+    icon: string,
+    name: string,
+}
+
+export component ContextBar {
+    in property <[TemplateItem]> templates: [
+        { id: "meeting",   icon: "🏢", name: "會議" },
+        { id: "casual",    icon: "💬", name: "口語" },
+        { id: "technical", icon: "💻", name: "技術" },
+        { id: "medical",   icon: "🏥", name: "醫療" },
+        { id: "legal",     icon: "⚖", name: "法律" },
+        { id: "auto",      icon: "🔮", name: "自動" },
+    ];
+    in-out property <string> selected-id: "auto";
+    callback template-selected(string);
+
+    height: 44px;
+
+    Rectangle {
+        background: Tokens.bg-secondary;
+
+        // bottom border line
+        Rectangle {
+            y: parent.height - 1px;
+            height: 1px;
+            background: Tokens.border;
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            spacing: 4px;
+            padding-left: 12px;
+            padding-right: 12px;
+
+            for item in root.templates: Rectangle {
+                property <bool> is-selected: root.selected-id == item.id;
+                width: 70px;
+                height: 32px;
+                border-radius: Tokens.radius-pill;
+                background: is-selected ? Tokens.accent : transparent;
+                animate background { duration: Tokens.anim-fast; }
+
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 4px;
+
+                    Text {
+                        text: item.icon;
+                        font-size: 14px;
+                    }
+
+                    Text {
+                        text: item.name;
+                        font-size: Tokens.font-xs;
+                        color: is-selected ? white : Tokens.text-secondary;
+                        animate color { duration: Tokens.anim-fast; }
+                    }
+                }
+
+                TouchArea {
+                    clicked => {
+                        root.selected-id = item.id;
+                        root.template-selected(item.id);
+                    }
+                }
+            }
+        }
+    }
+}

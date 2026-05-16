@@ -1,0 +1,251 @@
+// v2.0 新增 — Liquid Glass 緊湊頂部條
+import { Tokens, DarkTokens, GlassDark } from "../styles/tokens.slint";
+
+export component CompactBar {
+    in property <bool> dark-mode: false;
+    in property <bool> is-recording: false;
+    in property <bool> is-processing: false;
+    in property <bool> ptt-mode: false;
+    in property <bool> expanded: false;
+    in property <bool> settings-open: false;
+    in property <float> audio-level: 0.0;
+    in property <[float]> bar-levels: [];
+    in property <string> partial-text: "";
+    in property <string> status-hint: "就緒";
+
+    callback toggle-recording();
+    callback toggle-expanded();
+    callback toggle-settings();
+    callback toggle-dark();
+    callback request-close();
+    callback start-drag();   // 預留：Rust 端處理視窗拖曳
+
+    // 主題色解析
+    property <color> bg:       dark-mode ? GlassDark.glass-bg       : Tokens.glass-bg;
+    property <color> stroke:   dark-mode ? GlassDark.glass-stroke   : Tokens.glass-stroke;
+    property <color> hairline: dark-mode ? GlassDark.glass-hairline : Tokens.glass-hairline;
+    property <color> txt:      dark-mode ? DarkTokens.text-primary  : Tokens.text-primary;
+    property <color> txt2:     dark-mode ? DarkTokens.text-secondary: Tokens.text-secondary;
+    property <color> acc:      dark-mode ? DarkTokens.accent        : Tokens.accent;
+    property <brush> ambient:  dark-mode ? GlassDark.glass-ambient  : Tokens.glass-ambient;
+    property <brush> sheen:    dark-mode ? GlassDark.glass-sheen    : Tokens.glass-sheen;
+
+    height: 52px;
+
+    // ── 背景層：玻璃感（多層疊加模擬模糊）─────────────────────
+    Rectangle {
+        background: root.bg;
+        border-radius: 14px;
+        border-width: 1px;
+        border-color: root.stroke;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: dark-mode ? GlassDark.glass-shadow : Tokens.glass-shadow;
+        drop-shadow-offset-y: 6px;
+
+        // ambient gradient
+        Rectangle {
+            background: root.ambient;
+            border-radius: 14px;
+        }
+        // top sheen
+        Rectangle {
+            y: 0;
+            height: parent.height / 2;
+            background: root.sheen;
+            border-radius: 14px;
+        }
+    }
+
+    // ── 內容 ─────────────────────────────────────────────────
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 10px;
+        alignment: stretch;
+
+        // 拖曳把手 + 錄音按鈕
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: center;
+
+            // 拖曳區（左側細條）
+            Rectangle {
+                width: 6px;
+                height: 24px;
+                border-radius: 3px;
+                background: root.hairline;
+                TouchArea {
+                    moved => { root.start-drag(); }
+                    mouse-cursor: MouseCursor.move;
+                }
+            }
+
+            // 錄音按鈕（小巧）
+            Rectangle {
+                width: 36px;
+                height: 36px;
+                border-radius: 18px;
+                background: root.is-recording
+                    ? Tokens.recording-red
+                    : root.acc;
+                drop-shadow-blur: root.is-recording ? 14px : 5px;
+                drop-shadow-color: root.is-recording
+                    ? Tokens.recording-pulse
+                    : rgba(0, 113, 227, 0.35);
+                animate background { duration: Tokens.anim-normal; }
+                animate drop-shadow-blur { duration: 600ms; easing: ease-in-out; }
+
+                // 內圈高光
+                Rectangle {
+                    width: 80%;
+                    height: 80%;
+                    border-radius: parent.border-radius;
+                    background: @linear-gradient(180deg,
+                        rgba(255,255,255,0.35) 0%,
+                        rgba(255,255,255,0.0)  60%);
+                }
+
+                Text {
+                    text: root.is-processing ? "⏳"
+                        : root.is-recording ? "■"
+                        : "●";
+                    font-size: root.is-processing ? 14px : 16px;
+                    color: white;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                TouchArea {
+                    enabled: root.is-recording || !root.is-processing;
+                    pointer-event(e) => {
+                        if (root.ptt-mode) {
+                            if (e.kind == PointerEventKind.down && !root.is-recording) {
+                                root.toggle-recording();
+                            } else if (e.kind == PointerEventKind.up && root.is-recording) {
+                                root.toggle-recording();
+                            }
+                        }
+                    }
+                    clicked => {
+                        if (!root.ptt-mode) { root.toggle-recording(); }
+                    }
+                    mouse-cursor: MouseCursor.pointer;
+                }
+            }
+        }
+
+        // 中段：mini waveform + 即時文字（共用 horizontal stretch）
+        Rectangle {
+            horizontal-stretch: 1;
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: stretch;
+
+                // 24 bar 迷你波形
+                Rectangle {
+                    width: 84px;
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 2px;
+
+                        for i in 24: Rectangle {
+                            width: 2px;
+                            height: root.is-recording
+                                ? max(3px, root.bar-levels[mod(i, 24)] * 28px)
+                                : 3px;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: 1px;
+                            background: root.is-recording
+                                ? @linear-gradient(180deg, root.acc, #5ac8fa)
+                                : root.txt2;
+                            animate height { duration: 70ms; easing: ease-out; }
+                        }
+                    }
+                }
+
+                // 即時 partial text（單行截斷）
+                Rectangle {
+                    horizontal-stretch: 1;
+                    clip: true;
+                    Text {
+                        x: 0;
+                        width: parent.width;
+                        height: parent.height;
+                        text: root.partial-text != ""
+                            ? root.partial-text
+                            : root.status-hint;
+                        font-size: Tokens.font-sm;
+                        font-weight: root.partial-text != "" ? 500 : 400;
+                        color: root.partial-text != "" ? root.txt : root.txt2;
+                        vertical-alignment: center;
+                        horizontal-alignment: left;
+                        overflow: elide;
+                        wrap: no-wrap;
+                    }
+                }
+            }
+        }
+
+        // 右側工具
+        HorizontalLayout {
+            spacing: 4px;
+            alignment: center;
+
+            // 主題切換
+            Rectangle {
+                width: 28px; height: 28px;
+                border-radius: 8px;
+                background: transparent;
+                Text {
+                    text: root.dark-mode ? "☀" : "🌙";
+                    font-size: 13px;
+                    color: root.txt2;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    clicked => { root.toggle-dark(); }
+                    mouse-cursor: MouseCursor.pointer;
+                }
+            }
+
+            // 設定
+            Rectangle {
+                width: 28px; height: 28px;
+                border-radius: 8px;
+                background: root.settings-open ? root.acc : transparent;
+                animate background { duration: Tokens.anim-fast; }
+                Text {
+                    text: "⚙";
+                    font-size: 13px;
+                    color: root.settings-open ? white : root.txt2;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    clicked => { root.toggle-settings(); }
+                    mouse-cursor: MouseCursor.pointer;
+                }
+            }
+
+            // 展開 / 收合
+            Rectangle {
+                width: 28px; height: 28px;
+                border-radius: 8px;
+                background: transparent;
+                Text {
+                    text: root.expanded ? "˄" : "˅";
+                    font-size: 15px;
+                    color: root.txt2;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    clicked => { root.toggle-expanded(); }
+                    mouse-cursor: MouseCursor.pointer;
+                }
+            }
+        }
+    }
+}

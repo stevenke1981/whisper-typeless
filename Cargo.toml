@@ -1,0 +1,77 @@
+[package]
+name = "whisper-typeless"
+version = "0.1.0"
+edition = "2021"
+description = "Real-time speech-to-text with auto-inject, powered by whisper.cpp"
+license = "MIT"
+
+[[bin]]
+name = "whisper-typeless"
+path = "src/main.rs"
+
+[dependencies]
+# GUI
+slint = { version = "1.7", features = ["raw-window-handle-06"] }
+
+whisper-rs = "0.16"
+
+# Audio
+cpal = "0.15"
+rubato = "0.15"
+
+# Clipboard + keyboard injection
+arboard = "3.4"
+enigo = { version = "0.2", features = [] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP download
+reqwest = { version = "0.12", features = ["stream", "json", "rustls-tls"], default-features = false }
+
+# Serialization + config
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+ferrous-opencc = "0.4"
+
+# Crypto (model checksum)
+sha2 = "0.10"
+sha1 = "0.10"
+
+# Error handling
+thiserror = "1"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# File transcription
+symphonia = { version = "0.5", features = ["all"] }
+rfd = "0.15"
+
+# Utilities
+dirs = "5"
+futures = "0.3"
+bytes = "1"
+
+[build-dependencies]
+slint-build = "1.7"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["winuser", "processthreadsapi", "wingdi"] }
+raw-window-handle = "0.6"
+
+[features]
+default = ["cuda"]
+cuda    = ["whisper-rs/cuda"]
+metal   = ["whisper-rs/metal"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.dev]
+opt-level = 1

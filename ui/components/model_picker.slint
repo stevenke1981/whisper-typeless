@@ -1,0 +1,49 @@
+import { Tokens } from "../styles/tokens.slint";
+import { ComboBox } from "std-widgets.slint";
+
+export component ModelPicker {
+    in property <[string]> model-list: ["tiny", "small", "medium", "large-v3"];
+    in-out property <int> current-index: 1;
+    callback model-changed(int);
+
+    width: 140px;
+    height: 32px;
+
+    Rectangle {
+        background: Tokens.bg-tertiary;
+        border-radius: Tokens.radius-sm;
+        border-width: 1px;
+        border-color: Tokens.border;
+
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 8px;
+            spacing: 6px;
+            alignment: space-between;
+
+            Text {
+                text: root.model-list.length > 0
+                    ? root.model-list[root.current-index]
+                    : "選擇模型";
+                font-size: Tokens.font-sm;
+                color: Tokens.text-primary;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: "▾";
+                font-size: 10px;
+                color: Tokens.text-secondary;
+                vertical-alignment: center;
+            }
+        }
+
+        TouchArea {
+            clicked => {
+                // 循環切換（完整實作需要 Popup）
+                root.current-index = mod(root.current-index + 1, root.model-list.length);
+                root.model-changed(root.current-index);
+            }
+        }
+    }
+}
