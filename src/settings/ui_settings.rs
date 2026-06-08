@@ -61,7 +61,7 @@ impl Default for UiSettings {
             append_newline: true,
             clipboard_enabled: true,
             inject_enabled: true,
-            selected_model_id: "small".into(),
+            selected_model_id: "medium".into(),
         }
     }
 }

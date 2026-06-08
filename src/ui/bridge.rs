@@ -6,6 +6,86 @@ use std::sync::{
 use tokio::{runtime::Handle as TokioHandle, sync::RwLock};
 use tracing::{error, info};
 
+// ─── 臨時 stderr 抑制（Slint/parley→ICU4X 啟動雜訊）──────────────────────
+//
+// ICU4X v2.2 的 icu_segmenter 缺少 ja 語系的 segmentation 模型，
+// 但 Slint 在 AppWindow::new() 時會觸發 text layout → parley → icu_segmenter，
+// 噴出 60+ 行 "ICU4X data error: No segmentation model for language: ja"。
+// 這些錯誤走 eprintln!，繞過 tracing/log 過濾器，純屬非功能性雜訊。
+// 解法：在 AppWindow::new() 期間暫時 redirect stderr → NUL。
+
+#[cfg(windows)]
+/// Guard 物件：建構時將 stderr 重新導向至 NUL，drop 時恢復。
+struct IcuStderrGuard {
+    old_handle: *mut winapi::ctypes::c_void,
+    null_handle: *mut winapi::ctypes::c_void,
+}
+
+#[cfg(windows)]
+impl IcuStderrGuard {
+    fn new() -> Option<Self> {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        use winapi::um::fileapi::{CreateFileW, OPEN_EXISTING};
+        use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
+        use winapi::um::processenv::{GetStdHandle, SetStdHandle};
+        use winapi::um::winbase::STD_ERROR_HANDLE;
+        use winapi::um::winnt::{FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_WRITE};
+
+        // SAFETY: 僅在初始化主執行緒上呼叫，無併發競爭。
+        unsafe {
+            let null_path: Vec<u16> = OsStr::new("NUL").encode_wide().chain(Some(0)).collect();
+            let raw_null = CreateFileW(
+                null_path.as_ptr(),
+                GENERIC_WRITE,
+                FILE_SHARE_WRITE | FILE_SHARE_READ,
+                std::ptr::null_mut(),
+                OPEN_EXISTING,
+                0,
+                std::ptr::null_mut(),
+            );
+
+            if raw_null == INVALID_HANDLE_VALUE {
+                return None;
+            }
+
+            let raw_old = GetStdHandle(STD_ERROR_HANDLE);
+            if raw_old.is_null() || raw_old == INVALID_HANDLE_VALUE {
+                CloseHandle(raw_null);
+                return None;
+            }
+
+            SetStdHandle(STD_ERROR_HANDLE, raw_null);
+
+            Some(Self { old_handle: raw_old, null_handle: raw_null })
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for IcuStderrGuard {
+    fn drop(&mut self) {
+        use winapi::um::handleapi::CloseHandle;
+        use winapi::um::processenv::SetStdHandle;
+        use winapi::um::winbase::STD_ERROR_HANDLE;
+
+        // SAFETY: 恢復原始 stderr 後關閉 NUL handle。
+        unsafe {
+            SetStdHandle(STD_ERROR_HANDLE, self.old_handle);
+            CloseHandle(self.null_handle);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+struct IcuStderrGuard;
+#[cfg(not(windows))]
+impl IcuStderrGuard {
+    fn new() -> Option<Self> {
+        None
+    }
+}
+
 // ─── PTT WH_KEYBOARD_LL 靜態狀態（hook callback 無法捕獲環境）──────────────
 
 static PTT_VKEY: AtomicU32 = AtomicU32::new(0);
@@ -329,6 +409,8 @@ impl ModelRuntime {
 // ─── Entry ───────────────────────────────────────────────────────────────────
 
 pub async fn launch(state: Arc<RwLock<AppState>>) -> anyhow::Result<()> {
+    // 抑制 Slint/parley→ICU4X 初始化的 stderr 雜訊
+    let _icu_guard = IcuStderrGuard::new();
     let ui = AppWindow::new()?;
 
     // Restore UI settings from settings.json (if it exists) before any callbacks are wired.
