@@ -1,0 +1,11 @@
+{
+    "schema_version": 1,
+    "commit": "",
+    "indexed_at": "2026-06-09T02:25:31Z",
+    "project": "D-whisper-typeless",
+    "nodes": 733,
+    "edges": 1194,
+    "original_size": 2490368,
+    "compressed_size": 467364,
+    "compression_level": 9
+}

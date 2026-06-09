@@ -27,63 +27,6 @@ static PTT_PENDING_RELEASE: AtomicU32 = AtomicU32::new(0);
 const PTT_INJECTED_EXTRA_INFO: usize = 0xCAFE_0001;
 
 #[cfg(windows)]
-fn parse_windows_vkey(raw_key: &str, fallback: u32) -> u32 {
-    use winapi::um::winuser::*;
-
-    let key = raw_key.trim().to_ascii_uppercase().replace(' ', "");
-    if key.is_empty() {
-        return fallback;
-    }
-
-    if key.len() == 1 {
-        let ch = key.as_bytes()[0] as char;
-        if ch.is_ascii_alphanumeric() {
-            return ch as u32;
-        }
-        return match ch {
-            ' ' => VK_SPACE as u32,
-            '-' => VK_OEM_MINUS as u32,
-            '=' | '+' => VK_OEM_PLUS as u32,
-            ',' => VK_OEM_COMMA as u32,
-            '.' => VK_OEM_PERIOD as u32,
-            '/' => VK_OEM_2 as u32,
-            ';' => VK_OEM_1 as u32,
-            '\'' => VK_OEM_7 as u32,
-            '[' => VK_OEM_4 as u32,
-            ']' => VK_OEM_6 as u32,
-            '\\' => VK_OEM_5 as u32,
-            '`' => VK_OEM_3 as u32,
-            _ => fallback,
-        };
-    }
-
-    if let Some(num) = key.strip_prefix('F').and_then(|n| n.parse::<u32>().ok()) {
-        if (1..=24).contains(&num) {
-            return VK_F1 as u32 + num - 1;
-        }
-    }
-
-    match key.as_str() {
-        "SPACE" | "SPACEBAR" => VK_SPACE as u32,
-        "ENTER" | "RETURN" => VK_RETURN as u32,
-        "ESC" | "ESCAPE" => VK_ESCAPE as u32,
-        "TAB" => VK_TAB as u32,
-        "BACKSPACE" | "BKSP" => VK_BACK as u32,
-        "DELETE" | "DEL" => VK_DELETE as u32,
-        "INSERT" | "INS" => VK_INSERT as u32,
-        "HOME" => VK_HOME as u32,
-        "END" => VK_END as u32,
-        "PAGEUP" | "PGUP" => VK_PRIOR as u32,
-        "PAGEDOWN" | "PGDN" => VK_NEXT as u32,
-        "UP" | "ARROWUP" => VK_UP as u32,
-        "DOWN" | "ARROWDOWN" => VK_DOWN as u32,
-        "LEFT" | "ARROWLEFT" => VK_LEFT as u32,
-        "RIGHT" | "ARROWRIGHT" => VK_RIGHT as u32,
-        _ => fallback,
-    }
-}
-
-#[cfg(windows)]
 fn parse_ptt_hotkey(s: &str) -> (u32, u32) {
     let parts: Vec<&str> = s
         .split('+')
@@ -100,7 +43,10 @@ fn parse_ptt_hotkey(s: &str) -> (u32, u32) {
             _ => {}
         }
     }
-    (mods, parse_windows_vkey(key_part, 'L' as u32))
+    (
+        mods,
+        super::hotkey::parse_windows_vkey(key_part, 'L' as u32),
+    )
 }
 
 #[cfg(windows)]
