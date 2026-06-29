@@ -10,7 +10,9 @@ import { CompactBar } from "components/compact_bar.slint";
 import { QuickActions } from "components/quick_actions.slint";
 
 export component AppWindow inherits Window {
-    title: "whisper-typeless";
+    title: root.app-title;
+    // 由 Rust 端在 launch 時設為 whisper-typeless v{version}
+    in-out property <string> app-title: "whisper-typeless";
     background: root.bg;
     // 注意：no-frame / always-on-top 是 Window 建構期屬性，無法 runtime 切換。
     // 兩模式都保留 OS 框架；always-on-top 由 Rust 端 WindowHandle 動態控制。

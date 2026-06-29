@@ -1,5 +1,5 @@
 use futures::StreamExt;
-use sha1::{Digest, Sha1};
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -62,7 +62,7 @@ impl ModelDownloader {
                 .download_from_url(
                     url,
                     model_id,
-                    &model.sha1,
+                        &model.sha256,
                     &dest,
                     &temp,
                     progress_tx.clone(),
@@ -88,7 +88,7 @@ impl ModelDownloader {
         &self,
         url: &str,
         model_id: &str,
-        expected_sha1: &str,
+        expected_sha256: &str,
         dest: &PathBuf,
         temp: &PathBuf,
         progress_tx: tokio::sync::mpsc::Sender<DownloadProgress>,
@@ -98,7 +98,7 @@ impl ModelDownloader {
         let mut file = fs::File::create(temp).await?;
         let mut stream = response.bytes_stream();
         let mut downloaded = 0u64;
-        let mut hasher = Sha1::new();
+        let mut hasher = Sha256::new();
         let start = std::time::Instant::now();
 
         while let Some(chunk) = stream.next().await {
@@ -122,9 +122,9 @@ impl ModelDownloader {
         drop(file);
 
         let computed = format!("{:x}", hasher.finalize());
-        if !expected_sha1.is_empty() && !computed.eq_ignore_ascii_case(expected_sha1) {
+        if !expected_sha256.is_empty() && !computed.eq_ignore_ascii_case(expected_sha256) {
             return Err(anyhow::anyhow!(
-                "SHA1 校驗失敗: 期望 {expected_sha1}, 得到 {computed}"
+                "SHA-256 校驗失敗: 期望 {expected_sha256}, 得到 {computed}"
             ));
         }
 

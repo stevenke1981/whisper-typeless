@@ -16,7 +16,8 @@ pub struct ModelInfo {
     pub speed_multiplier: f32,
     pub quality_stars: u8,
     pub is_english_only: bool,
-    pub sha1: String,
+    /// SHA-256 hex string (preferred); falls back to `sha1` if empty.
+    pub sha256: String,
     pub download_url: String,
     pub mirror_urls: Vec<String>,
     pub local_path: Option<PathBuf>,
@@ -40,7 +41,8 @@ struct ModelCatalogEntry {
     speed_multiplier: f32,
     quality_stars: u8,
     is_english_only: bool,
-    sha1: String,
+    #[serde(alias = "sha1")]
+    sha256: String,
     download_url: String,
     #[serde(default)]
     mirror_urls: Vec<String>,
@@ -117,12 +119,48 @@ impl ModelRegistry {
                 speed_multiplier: entry.speed_multiplier,
                 quality_stars: entry.quality_stars,
                 is_english_only: entry.is_english_only,
-                sha1: entry.sha1,
+                sha256: entry.sha256,
                 download_url: entry.download_url,
                 mirror_urls: entry.mirror_urls,
                 local_path: None,
                 is_downloaded: false,
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_parses_embedded_catalog() {
+        let models = ModelRegistry::all();
+        assert!(!models.is_empty(), "should have at least one model");
+        assert!(models.len() >= 5, "should have at least 5 models");
+    }
+
+    #[test]
+    fn registry_entries_have_required_fields() {
+        let models = ModelRegistry::all();
+        for m in &models {
+            assert!(!m.id.is_empty(), "model id must not be empty");
+            assert!(!m.download_url.is_empty(), "{} has no download_url", m.id);
+            assert!(m.size.disk_mb > 0, "{} disk_mb must be > 0", m.id);
+        }
+    }
+
+    #[test]
+    fn registry_fallback_on_broken_catalog() {
+        let result = ModelRegistry::parse_catalog("not valid json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn model_id_candidate_filenames() {
+        use crate::models::ModelId;
+        let names = ModelId::candidate_filenames_for("small");
+        assert!(names.contains(&"small.gguf".to_string()));
+        assert!(names.contains(&"ggml-small.bin".to_string()));
     }
 }

@@ -21,11 +21,21 @@ impl ModelManager {
         }
     }
 
+    /// Find a model file on disk, trying both `.gguf` and `ggml-*.bin` names.
+    fn find_model_path(&self, model_id: &str) -> Option<PathBuf> {
+        for name in super::ModelId::candidate_filenames_for(model_id) {
+            let path = self.models_dir.join(&name);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+        None
+    }
+
     pub async fn list_available(&self) -> Vec<ModelInfo> {
         let mut models = ModelRegistry::all();
         for model in &mut models {
-            let path = self.models_dir.join(format!("ggml-{}.bin", model.id));
-            if path.exists() {
+            if let Some(path) = self.find_model_path(&model.id) {
                 model.local_path = Some(path);
                 model.is_downloaded = true;
             }
@@ -46,12 +56,11 @@ impl ModelManager {
             }
         }
 
-        let path = self.models_dir.join(format!("ggml-{model_id}.bin"));
-        if !path.exists() {
-            return Err(anyhow::anyhow!("模型未下載: {model_id}"));
-        }
+        let path = self
+            .find_model_path(model_id)
+            .ok_or_else(|| anyhow::anyhow!("模型未下載: {model_id}"))?;
 
-        info!("載入模型: {model_id}");
+        info!("載入模型: {model_id} ({})", path.display());
         let engine = Arc::new(WhisperEngine::load(&path, params)?);
         *lock = Some((model_id.to_string(), Arc::clone(&engine)));
 

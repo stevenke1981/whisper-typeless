@@ -43,7 +43,7 @@ pub struct UiSettings {
 impl Default for UiSettings {
     fn default() -> Self {
         Self {
-            vad_threshold: 0.6,
+            vad_threshold: crate::audio::VAD_DEFAULT_THRESHOLD,
             silence_timeout_ms: 1500.0,
             n_threads: 4,
             use_gpu: true,

@@ -15,7 +15,11 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    tracing::info!("whisper-typeless 啟動中...");
+    tracing::info!(
+        "{} 啟動中 (target: {})",
+        whisper_typeless::APP_NAME,
+        std::env::consts::ARCH,
+    );
 
     let app_state = whisper_typeless::app::AppState::new().await?;
     whisper_typeless::ui::run(app_state).await?;

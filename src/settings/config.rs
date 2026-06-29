@@ -37,9 +37,9 @@ impl Default for AudioConfig {
     fn default() -> Self {
         Self {
             device_name: None,
-            vad_silence_timeout_ms: 1500,
-            vad_threshold: 0.02,
-            max_segment_seconds: 30,
+            vad_silence_timeout_ms: crate::audio::VAD_DEFAULT_SILENCE_TIMEOUT_MS,
+            vad_threshold: crate::audio::VAD_DEFAULT_THRESHOLD,
+            max_segment_seconds: crate::audio::MAX_SEGMENT_SECONDS,
         }
     }
 }

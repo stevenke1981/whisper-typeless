@@ -7,7 +7,7 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-use crate::audio::Resampler;
+use crate::audio::{Resampler, TARGET_SAMPLE_RATE};
 use crate::whisper::TranscriptSegment;
 
 pub struct DecodedAudio {
@@ -94,14 +94,14 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
     }
 
     // resample to 16kHz if needed
-    let final_samples = if sample_rate != 16000 {
+    let final_samples = if sample_rate != TARGET_SAMPLE_RATE {
         let mut resampler = Resampler::new(sample_rate)?;
         resampler.process(&raw_samples)?
     } else {
         raw_samples
     };
 
-    let duration_ms = (final_samples.len() as u64 * 1000) / 16000;
+    let duration_ms = (final_samples.len() as u64 * 1000) / TARGET_SAMPLE_RATE as u64;
 
     Ok(DecodedAudio {
         samples: final_samples,
@@ -192,4 +192,76 @@ fn format_vtt(segments: &[TranscriptSegment]) -> String {
         ));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::whisper::TranscriptSegment;
+
+    fn sample_segments() -> Vec<TranscriptSegment> {
+        vec![
+            TranscriptSegment {
+                text: "Hello world.".into(),
+                start_ms: 0,
+                end_ms: 1000,
+            },
+            TranscriptSegment {
+                text: "This is a test.".into(),
+                start_ms: 1200,
+                end_ms: 2500,
+            },
+        ]
+    }
+
+    #[test]
+    fn export_format_from_extension() {
+        assert_eq!(ExportFormat::from_extension("srt"), ExportFormat::Srt);
+        assert_eq!(ExportFormat::from_extension("vtt"), ExportFormat::Vtt);
+        assert_eq!(ExportFormat::from_extension("txt"), ExportFormat::Txt);
+        assert_eq!(ExportFormat::from_extension("unknown"), ExportFormat::Txt);
+        assert_eq!(ExportFormat::from_extension(""), ExportFormat::Txt);
+    }
+
+    #[test]
+    fn export_format_extension() {
+        assert_eq!(ExportFormat::Txt.extension(), "txt");
+        assert_eq!(ExportFormat::Srt.extension(), "srt");
+        assert_eq!(ExportFormat::Vtt.extension(), "vtt");
+    }
+
+    #[test]
+    fn format_transcript_txt() {
+        let segs = sample_segments();
+        let result = format_transcript(&segs, ExportFormat::Txt);
+        assert!(result.contains("Hello world."));
+        assert!(result.contains("This is a test."));
+    }
+
+    #[test]
+    fn format_transcript_srt() {
+        let segs = sample_segments();
+        let result = format_transcript(&segs, ExportFormat::Srt);
+        assert!(result.starts_with("1\n"));
+        assert!(result.contains(" --> "));
+        assert!(result.contains("00:00:00,000 --> 00:00:01,000"));
+    }
+
+    #[test]
+    fn format_transcript_vtt() {
+        let segs = sample_segments();
+        let result = format_transcript(&segs, ExportFormat::Vtt);
+        assert!(result.starts_with("WEBVTT"));
+        assert!(result.contains("00:00:00.000 --> 00:00:01.000"));
+    }
+
+    #[test]
+    fn ms_to_srt_vtt_matches() {
+        let ms = 123_456; // 2min 3sec 456ms
+        let srt = ms_to_srt(ms);
+        let vtt = ms_to_vtt(ms);
+        // Same time but srt uses comma, vtt uses period as millisecond separator
+        assert_eq!(srt, "00:02:03,456");
+        assert_eq!(vtt, "00:02:03.456");
+    }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "whisper-typeless"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Real-time speech-to-text with auto-inject, powered by whisper.cpp"
 license = "MIT"
@@ -37,7 +37,6 @@ ferrous-opencc = "0.4"
 
 # Crypto (model checksum)
 sha2 = "0.10"
-sha1 = "0.10"
 
 # Error handling
 thiserror = "1"

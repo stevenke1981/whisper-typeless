@@ -8,7 +8,10 @@ use tracing::{error, info};
 
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::audio::{AudioCapture, Resampler, VadEvent, VoiceActivityDetector};
+use crate::audio::{
+    AudioCapture, Resampler, VadEvent, VoiceActivityDetector, TARGET_SAMPLE_RATE,
+    WAVEFORM_BAR_COUNT,
+};
 use crate::settings::config::AppConfig;
 use crate::whisper::{WhisperEngine, WhisperParams};
 use crate::{AppWindow, TranscriptSegmentData};
@@ -68,7 +71,7 @@ pub fn setup_recording_callbacks(
                         ui.set_audio_level(0.0);
                         ui.set_is_processing(false);
                         ui.set_current_partial("".into());
-                        ui.set_waveform_bars(ModelRc::new(VecModel::from(vec![0.0f32; 20])));
+                        ui.set_waveform_bars(ModelRc::new(VecModel::from(vec![0.0f32; WAVEFORM_BAR_COUNT])));
                     }
                 });
             } else {
@@ -159,6 +162,7 @@ pub fn setup_recording_callbacks(
                 };
 
                 // 讀取輸出設定（從 UI 讀取當前狀態）
+                let privacy_mode = cfg.output.privacy_mode;
                 let (
                     clipboard_on,
                     inject_on,
@@ -206,6 +210,7 @@ pub fn setup_recording_callbacks(
                         inject_on,
                         opencc_enabled,
                         conversion_mode,
+                        privacy_mode,
                         audio_std_rx,
                         level_std_rx,
                         stop_flag_thread,
@@ -252,6 +257,7 @@ pub fn setup_recording_callbacks(
 // ─── 錄音處理管線（獨立執行緒）────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn run_recording_pipeline(
     model_id: String,
     model_path: PathBuf,
@@ -263,6 +269,7 @@ fn run_recording_pipeline(
     inject_enabled: bool,
     opencc_enabled: bool,
     conversion_mode: String,
+    privacy_mode: bool,
     audio_rx: std::sync::mpsc::Receiver<Vec<f32>>,
     level_rx: std::sync::mpsc::Receiver<f32>,
     stop_flag: Arc<AtomicBool>,
@@ -280,7 +287,7 @@ fn run_recording_pipeline(
     let mut vad = VoiceActivityDetector::new(vad_threshold, vad_timeout_ms);
 
     // 波形環形緩衝（20 條 bar）
-    let mut bar_buf: Vec<f32> = vec![0.0f32; 20];
+    let mut bar_buf: Vec<f32> = vec![0.0f32; WAVEFORM_BAR_COUNT];
     let mut bar_idx: usize = 0;
     let mut last_wave_tick = std::time::Instant::now();
     let mut full_samples: Vec<f32> = Vec::new();
@@ -301,15 +308,20 @@ fn run_recording_pipeline(
             if full_samples.is_empty() {
                 info!("停止錄音，但沒有收到音訊樣本");
             } else {
-                let duration_ms = (full_samples.len() as u64 * 1000) / 16_000;
-                let wav_path = match save_recording_wav(&full_samples, 16_000) {
-                    Ok(path) => {
-                        info!("已保留完整錄音: {} ({}ms)", path.display(), duration_ms);
-                        Some(path)
-                    }
-                    Err(e) => {
-                        error!("保存錄音失敗: {e}");
-                        None
+                let duration_ms = (full_samples.len() as u64 * 1000) / TARGET_SAMPLE_RATE as u64;
+                let wav_path = if privacy_mode {
+                    info!("隱私模式啟用，跳過錄音檔案儲存");
+                    None
+                } else {
+                    match save_recording_wav(&full_samples, TARGET_SAMPLE_RATE) {
+                        Ok(path) => {
+                            info!("已保留完整錄音: {} ({}ms)", path.display(), duration_ms);
+                            Some(path)
+                        }
+                        Err(e) => {
+                            error!("保存錄音失敗: {e}");
+                            None
+                        }
                     }
                 };
                 let segment = crate::audio::AudioSegment {
@@ -326,6 +338,7 @@ fn run_recording_pipeline(
                     inject_enabled,
                     opencc_enabled,
                     conversion_mode.clone(),
+                    privacy_mode,
                     &ui_weak,
                     &transcript_list,
                     wav_path,
@@ -341,7 +354,7 @@ fn run_recording_pipeline(
         // 更新音量等級 → 波形
         while let Ok(level) = level_rx.try_recv() {
             let normalized = (level * 4.0).min(1.0);
-            bar_buf[bar_idx % 20] = normalized;
+            bar_buf[bar_idx % WAVEFORM_BAR_COUNT] = normalized;
             bar_idx += 1;
         }
 
@@ -430,6 +443,7 @@ fn process_recording_chunk(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn transcribe_full_recording(
     runtime: &ModelRuntime,
     model_id: String,
@@ -440,6 +454,7 @@ fn transcribe_full_recording(
     inject_enabled: bool,
     opencc_enabled: bool,
     conversion_mode: String,
+    privacy_mode: bool,
     ui_weak: &slint::Weak<AppWindow>,
     transcript_list: &Arc<Mutex<Vec<TranscriptSegmentData>>>,
     wav_path: Option<PathBuf>,
@@ -459,6 +474,7 @@ fn transcribe_full_recording(
                 inject_enabled,
                 opencc_enabled,
                 conversion_mode.clone(),
+                privacy_mode,
                 ui_weak,
                 transcript_list,
                 wav_path,
@@ -510,6 +526,7 @@ fn transcribe_full_recording(
             inject_enabled,
             opencc_enabled,
             conversion_mode,
+            privacy_mode,
             ui_weak,
             transcript_list,
             wav_path,
@@ -559,6 +576,7 @@ fn save_recording_wav(samples: &[f32], sample_rate: u32) -> anyhow::Result<PathB
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn transcribe_and_update(
     engine: &WhisperEngine,
     segment: crate::audio::AudioSegment,
@@ -567,6 +585,7 @@ fn transcribe_and_update(
     inject_enabled: bool,
     opencc_enabled: bool,
     conversion_mode: String,
+    privacy_mode: bool,
     ui_weak: &slint::Weak<AppWindow>,
     transcript_list: &Arc<Mutex<Vec<TranscriptSegmentData>>>,
     wav_path: Option<PathBuf>,
@@ -603,6 +622,13 @@ fn transcribe_and_update(
             }
             if inject_enabled {
                 inject_text_to_focused_window(&text);
+            }
+
+            // 隱私模式：輸出後清除剪貼簿
+            if privacy_mode {
+                if let Ok(mut cb) = arboard::Clipboard::new() {
+                    let _ = cb.clear();
+                }
             }
 
             let ts = current_time_str();

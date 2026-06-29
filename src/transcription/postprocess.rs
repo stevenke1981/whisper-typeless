@@ -127,4 +127,54 @@ mod tests {
         let result = proc.process(repeated);
         assert!(result.len() < repeated.len());
     }
+
+    #[test]
+    fn postprocess_overlapping_repeats() {
+        let proc = default_proc();
+        let result = proc.process("ABCABCABCABC");
+        // Should collapse to at most one "ABC" plus possible leftover
+        assert!(result.len() <= 6, "got '{}' (len {})", result, result.len());
+    }
+
+    #[test]
+    fn postprocess_short_text_no_repeat_check() {
+        let proc = default_proc();
+        let result = proc.process("Hi");
+        assert_eq!(result, "Hi");
+    }
+
+    #[test]
+    fn postprocess_punctuation_normalize_all() {
+        let settings = PostProcessSettings {
+            add_punctuation: true,
+            ..Default::default()
+        };
+        let proc = PostProcessor::new(settings);
+        let result = proc.process("hello,world.ok!no?");
+        assert!(!result.contains(','));
+        assert!(!result.contains('.'));
+        assert!(result.contains('，'));
+        assert!(result.contains('。'));
+    }
+
+    #[test]
+    fn postprocess_formal_style_noop() {
+        let proc = default_proc();
+        let result = proc.process("no punctuation here");
+        assert_eq!(result, "no punctuation here");
+    }
+
+    #[test]
+    fn postprocess_repeated_edge_bigrams() {
+        let proc = default_proc();
+        let result = proc.process("ABABAB");
+        assert!(result.len() < 6, "should collapse 'ABABAB' but got '{}'", result);
+    }
+
+    #[test]
+    fn postprocess_empty_input() {
+        let proc = default_proc();
+        let result = proc.process("");
+        assert_eq!(result, "");
+    }
 }

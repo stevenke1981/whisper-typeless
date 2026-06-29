@@ -198,3 +198,51 @@ impl Default for TemplateRegistry {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::whisper::WhisperParams;
+
+    #[test]
+    fn templates_all_returns_ordered() {
+        let reg = TemplateRegistry::new();
+        let all = reg.all();
+        assert_eq!(all.len(), 5);
+        // Order should be: Meeting, Casual, Technical, Medical, Legal
+        assert_eq!(all[0].id, TemplateId::Meeting);
+        assert_eq!(all[1].id, TemplateId::Casual);
+        assert_eq!(all[4].id, TemplateId::Legal);
+    }
+
+    #[test]
+    fn templates_get_casual_exists() {
+        let reg = TemplateRegistry::new();
+        let t = reg.get_casual();
+        assert_eq!(t.id, TemplateId::Casual);
+        assert!(!t.initial_prompt.is_empty());
+    }
+
+    #[test]
+    fn templates_apply_prompt_to_params() {
+        let reg = TemplateRegistry::new();
+        let t = reg.get(&TemplateId::Meeting).unwrap();
+        let mut params = WhisperParams::default();
+        params.initial_prompt = None;
+        t.apply_to_params(&mut params);
+        assert_eq!(
+            params.initial_prompt.as_deref(),
+            Some("這是一段商業會議的記錄，包含專業術語、人名和公司名稱。請準確轉錄所有內容。")
+        );
+    }
+
+    #[test]
+    fn templates_apply_language_override() {
+        let reg = TemplateRegistry::new();
+        let t = reg.get(&TemplateId::Meeting).unwrap();
+        let mut params = WhisperParams::default();
+        params.language = Some("en".into());
+        t.apply_to_params(&mut params);
+        assert_eq!(params.language.as_deref(), Some("zh"));
+    }
+}

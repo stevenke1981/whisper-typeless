@@ -17,3 +17,10 @@ screenshot_*.png
 
 .DS_Store
 Thumbs.db
+
+# Tooling caches (OpenCode / CBM)
+.codebase-memory/
+.opencode/memory.db
+.opencode/vectors.usearch
+.opencode/tantivy/
+.opencode/status-footer/

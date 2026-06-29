@@ -83,3 +83,37 @@ impl Default for WhisperParams {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn params_default_values() {
+        let p = WhisperParams::default();
+        assert_eq!(p.language, Some("zh".into()));
+        assert_eq!(p.n_threads, 4);
+        assert_eq!(p.strategy, DecodingStrategy::Greedy);
+        assert!(p.use_gpu);
+        assert!(p.suppress_blank);
+        assert_eq!(p.temperature, 0.0);
+        assert_eq!(p.entropy_thold, 2.4);
+        assert_eq!(p.no_speech_thold, 0.3);
+    }
+
+    #[test]
+    fn params_serde_roundtrip() {
+        let p = WhisperParams::default();
+        let json = serde_json::to_string(&p).unwrap();
+        let restored: WhisperParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(p.language, restored.language);
+        assert_eq!(p.strategy, restored.strategy);
+        assert_eq!(p.temperature, restored.temperature);
+        assert_eq!(p.n_threads, restored.n_threads);
+    }
+
+    #[test]
+    fn params_strategy_default_is_greedy() {
+        assert_eq!(DecodingStrategy::default(), DecodingStrategy::Greedy);
+    }
+}

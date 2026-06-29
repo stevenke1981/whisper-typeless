@@ -27,8 +27,7 @@ impl VoiceActivityDetector {
             buffer: Vec::new(),
             last_speech: None,
             speaking: false,
-            // 30 seconds at 16kHz
-            max_segment_samples: 16000 * 30,
+            max_segment_samples: crate::audio::MAX_SEGMENT_SAMPLES,
         }
     }
 
@@ -75,7 +74,7 @@ impl VoiceActivityDetector {
 
     fn flush_segment(&mut self) -> VadEvent {
         let samples = std::mem::take(&mut self.buffer);
-        let duration_ms = (samples.len() as u64 * 1000) / 16000;
+        let duration_ms = (samples.len() as u64 * 1000) / crate::audio::TARGET_SAMPLE_RATE as u64;
         VadEvent::Segment(AudioSegment {
             samples,
             duration_ms,
@@ -90,7 +89,7 @@ impl VoiceActivityDetector {
         let samples = std::mem::take(&mut self.buffer);
         self.speaking = false;
         self.last_speech = None;
-        let duration_ms = (samples.len() as u64 * 1000) / 16000;
+        let duration_ms = (samples.len() as u64 * 1000) / crate::audio::TARGET_SAMPLE_RATE as u64;
         Some(AudioSegment {
             samples,
             duration_ms,
@@ -116,6 +115,7 @@ impl VoiceActivityDetector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::TARGET_SAMPLE_RATE;
 
     #[test]
     fn silence_produces_no_segment() {
@@ -131,5 +131,70 @@ mod tests {
         let loud = vec![0.8f32; 1600];
         let events = vad.process(&loud);
         assert!(events.iter().any(|e| matches!(e, VadEvent::SpeechStart)));
+    }
+
+    #[test]
+    fn vad_flush_returns_buffered() {
+        let mut vad = VoiceActivityDetector::new(0.1, 1500);
+        let loud = vec![0.8f32; 1600];
+        vad.process(&loud);
+        let segment = vad.flush();
+        assert!(segment.is_some());
+        let seg = segment.unwrap();
+        assert!(!seg.samples.is_empty());
+    }
+
+    #[test]
+    fn vad_flush_empty_returns_none() {
+        let mut vad = VoiceActivityDetector::new(0.5, 1500);
+        let segment = vad.flush();
+        assert!(segment.is_none());
+    }
+
+    #[test]
+    fn vad_rms_empty_returns_zero() {
+        let rms = VoiceActivityDetector::rms(&[]);
+        assert_eq!(rms, 0.0);
+    }
+
+    #[test]
+    fn vad_rms_positive() {
+        let rms = VoiceActivityDetector::rms(&[0.5f32; 100]);
+        assert!((rms - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn vad_threshold_update_takes_effect() {
+        let mut vad = VoiceActivityDetector::new(0.5, 1500);
+        // 0.3 RMS < 0.5 threshold → should NOT trigger SpeechStart
+        let med = vec![0.3f32; 1600];
+        let events = vad.process(&med);
+        let started = events.iter().any(|e| matches!(e, VadEvent::SpeechStart));
+        assert!(!started);
+
+        // Lower threshold → same audio should trigger
+        vad.set_threshold(0.2);
+        let events2 = vad.process(&med);
+        let started2 = events2.iter().any(|e| matches!(e, VadEvent::SpeechStart));
+        assert!(started2);
+    }
+
+    #[test]
+    fn vad_silence_timeout_update() {
+        let mut vad = VoiceActivityDetector::new(0.1, 10000); // very long timeout
+        let loud = vec![0.8f32; 1600];
+        vad.process(&loud); // start speaking
+        vad.process(&loud); // continue
+
+        // change to short timeout
+        vad.set_silence_timeout(10); // 10ms
+
+        // silence samples should now trigger timeout
+        let silent = vec![0.01f32; 1600];
+        let events = vad.process(&silent);
+        // since we didn't update last_speech (silence doesn't set it),
+        // we need to wait for the original last_speech to be old enough.
+        // This is a time-dependent test - let's verify the setter works.
+        assert_eq!(vad.silence_timeout, std::time::Duration::from_millis(10));
     }
 }

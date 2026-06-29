@@ -1,7 +1,6 @@
 use rubato::{FftFixedIn, Resampler as RubatoResampler};
 
-const TARGET_SAMPLE_RATE: u32 = 16000;
-const CHUNK_SIZE: usize = 1024;
+use crate::audio::{RESAMPLER_CHUNK_SIZE, TARGET_SAMPLE_RATE};
 
 pub struct Resampler {
     inner: Option<FftFixedIn<f32>>,
@@ -21,7 +20,7 @@ impl Resampler {
         let inner = FftFixedIn::<f32>::new(
             source_rate as usize,
             TARGET_SAMPLE_RATE as usize,
-            CHUNK_SIZE,
+            RESAMPLER_CHUNK_SIZE,
             2,
             1,
         )?;
@@ -42,8 +41,8 @@ impl Resampler {
         self.buffer.extend_from_slice(input);
         let mut output = Vec::new();
 
-        while self.buffer.len() >= CHUNK_SIZE {
-            let chunk: Vec<f32> = self.buffer.drain(..CHUNK_SIZE).collect();
+        while self.buffer.len() >= RESAMPLER_CHUNK_SIZE {
+            let chunk: Vec<f32> = self.buffer.drain(..RESAMPLER_CHUNK_SIZE).collect();
             let waves_out = resampler.process(&[chunk], None)?;
             output.extend(waves_out.into_iter().next().unwrap_or_default());
         }
@@ -53,5 +52,10 @@ impl Resampler {
 
     pub fn target_rate() -> u32 {
         TARGET_SAMPLE_RATE
+    }
+
+    /// The chunk size used for internal resampling.
+    pub fn chunk_size() -> usize {
+        RESAMPLER_CHUNK_SIZE
     }
 }
