@@ -24,3 +24,9 @@ Thumbs.db
 .opencode/vectors.usearch
 .opencode/tantivy/
 .opencode/status-footer/
+
+# Runtime artifacts
+app_stderr.log
+screenshot_*.bmp
+screenshot_*.png
+/dist/
