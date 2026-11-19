@@ -38,3 +38,38 @@ jobs:
         run: cargo test --no-default-features
       - name: cargo build --release
         run: cargo build --release --no-default-features
+
+  vulkan:
+    name: vulkan check / clippy / build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: img-${{ env.ImageVersion }}-vulkan
+      - name: Set LIBCLANG_PATH
+        shell: pwsh
+        run: |
+          $p = 'C:\Program Files\LLVM\bin'
+          if (Test-Path $p) { "LIBCLANG_PATH=$p" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+      # ggml-vulkan 需要 Vulkan SDK（含 glslc）；此 action 會設定 VULKAN_SDK 與 PATH
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          install_runtime: false
+          cache: true
+          stripdown: true
+      - name: Verify Vulkan SDK
+        shell: pwsh
+        run: |
+          Write-Host "VULKAN_SDK = $env:VULKAN_SDK"
+          if (-not $env:VULKAN_SDK -or -not (Test-Path "$env:VULKAN_SDK\Bin\glslc.exe")) { Write-Error 'glslc.exe not found in VULKAN_SDK'; exit 1 }
+      - name: cargo check
+        run: cargo check --all-targets --features vulkan
+      - name: cargo clippy
+        run: cargo clippy --all-targets --features vulkan -- -D warnings
+      - name: cargo build --release
+        run: cargo build --release --features vulkan

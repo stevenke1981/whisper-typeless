@@ -22,6 +22,8 @@ pub struct ModelInfo {
     pub mirror_urls: Vec<String>,
     pub local_path: Option<PathBuf>,
     pub is_downloaded: bool,
+    /// 建議優先使用的小型模型（catalog 的 `recommended`）。
+    pub recommended: bool,
 }
 
 pub struct ModelRegistry;
@@ -46,6 +48,8 @@ struct ModelCatalogEntry {
     download_url: String,
     #[serde(default)]
     mirror_urls: Vec<String>,
+    #[serde(default)]
+    recommended: bool,
 }
 
 impl ModelRegistry {
@@ -124,6 +128,7 @@ impl ModelRegistry {
                 mirror_urls: entry.mirror_urls,
                 local_path: None,
                 is_downloaded: false,
+                recommended: entry.recommended,
             })
             .collect())
     }
@@ -168,6 +173,20 @@ mod tests {
         assert!(m.mirror_urls.is_empty());
         assert!(!m.is_downloaded);
         assert!(m.local_path.is_none());
+    }
+
+    #[test]
+    fn recommended_defaults_false_and_embedded_marks_small_models() {
+        let models = ModelRegistry::parse_catalog(MINI_CATALOG).unwrap();
+        assert!(!models[0].recommended);
+        let all = ModelRegistry::parse_catalog(EMBEDDED_MODEL_CATALOG).unwrap();
+        let mut rec: Vec<_> = all
+            .iter()
+            .filter(|m| m.recommended)
+            .map(|m| m.id.as_str())
+            .collect();
+        rec.sort_unstable();
+        assert_eq!(rec, ["base", "small", "tiny"]);
     }
 
     #[test]

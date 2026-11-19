@@ -98,8 +98,39 @@ fn tray_section(_v: &mut View, _cx: &mut Ctx<'_>, _x0: f32, _y: f32, _cw: f32) -
 }
 
 /// GPU 後端 / 模型建議（WP-C）。
-fn gpu_model_section(_v: &mut View, _cx: &mut Ctx<'_>, _x0: f32, _y: f32, _cw: f32) -> f32 {
-    0.0
+fn gpu_model_section(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y: f32, cw: f32) -> f32 {
+    let t = cx.t;
+    let s = cx.s;
+    let backend = crate::whisper::gpu_backend_name();
+    let mut h = section_header(v, t, x0, y, cw, "GPU 與模型");
+    let label = match backend {
+        Some(name) => format!("使用 GPU（{name}）"),
+        None => "使用 GPU".to_string(),
+    };
+    h += toggle_row(
+        v,
+        t,
+        x0,
+        y + h,
+        cw,
+        &label,
+        s.use_gpu,
+        edit(SettingEdit::UseGpu(!s.use_gpu)),
+    );
+    let note = match backend {
+        Some(_) => "變更會在下次載入模型時生效。若當機，請關閉此選項改用 CPU。",
+        None => "此版本未含 GPU 支援，仍以 CPU 辨識；需要 GPU 請使用 Vulkan 版。",
+    };
+    v.text(r(x0, y + h, cw, 32.0), note, FONT_XS, t.text2, Align::Start);
+    h += 32.0;
+    v.text(
+        r(x0, y + h, cw, 32.0),
+        "建議使用 Tiny / Base / Small 小型模型；較大的模型下載前會再次確認。",
+        FONT_XS,
+        t.text2,
+        Align::Start,
+    );
+    h + 32.0
 }
 
 fn edit(e: SettingEdit) -> Msg {
@@ -159,16 +190,6 @@ fn content(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32) -> f32 {
 
     // ── Whisper 引擎 ──
     y += section_header(v, t, x0, y, cw, "Whisper 引擎");
-    y += toggle_row(
-        v,
-        t,
-        x0,
-        y,
-        cw,
-        "使用 GPU",
-        s.use_gpu,
-        edit(SettingEdit::UseGpu(!s.use_gpu)),
-    );
     row_label(v, t, x0, y, cw - ctrl_w - 50.0, 48.0, "溫度");
     v.text(
         r(ctrl_x - 48.0, y, 44.0, 48.0),

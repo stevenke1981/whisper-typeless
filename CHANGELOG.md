@@ -2,6 +2,23 @@
 
 本檔案格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 [語意化版本](https://semver.org/lang/zh-TW/)。
 
+## [Unreleased]
+
+### Added
+
+- Vulkan GPU 加速（Cargo feature `vulkan`）：Release 同時提供 `-cpu` 與 `-vulkan` 兩種 zip，`SHA256SUMS.txt` 彙整兩者。
+- Vulkan 版延遲載入 `vulkan-1.dll` 並於使用前探測；GPU 初始化失敗時自動改用 CPU（裝置標籤「CPU（GPU 初始化失敗）」）。
+- `--self-check` 回報 GPU 後端與執行環境狀態。
+- 設定新增「GPU 與模型」區段：使用 GPU 開關（下次載入模型生效）與小型模型建議。
+- CI 新增 Vulkan 工作；`scripts/dev.ps1` 新增 `-Vulkan` 並檢查 `VULKAN_SDK`。
+
+### Changed
+
+- 模型清單以 `recommended` 標記 tiny / base / small，並置頂顯示（由小到大）。
+- 選用的模型遺失時，自動改用已下載的最小模型，不再跳出下載提示。
+- Medium 以上的模型下載前一律先確認大小。
+- 裝置標籤改為「GPU (Vulkan)」「CPU（此版本未含 GPU）」，取代 CUDA 專用字樣。
+
 ## [0.4.0] - 2026-11-19
 
 ### Added

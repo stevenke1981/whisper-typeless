@@ -2,7 +2,7 @@ pub mod engine;
 pub mod params;
 pub mod session;
 
-pub use engine::WhisperEngine;
+pub use engine::{gpu_backend_name, gpu_runtime_available, WhisperEngine};
 pub use params::{DecodingStrategy, WhisperParams};
 
 #[derive(Debug, Clone)]

@@ -36,6 +36,7 @@ Windows PowerShell。優先使用腳本：
 .\scripts\dev.ps1 lint         # clippy -D warnings + fmt --check
 .\scripts\dev.ps1 build        # release，CPU
 .\scripts\dev.ps1 build -Cuda  # release，含 CUDA（需要 CUDA Toolkit）
+.\scripts\dev.ps1 build -Vulkan # release，含 Vulkan（需要 Vulkan SDK 與 VULKAN_SDK）
 ```
 
 等價的 cargo 指令（CI 使用 windows-latest、MSVC 工具鏈、CPU 版）：
