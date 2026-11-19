@@ -19,6 +19,8 @@ pub enum Command {
     Help,
     ConfigPath,
     SelfCheck,
+    /// AcmeUI 外殼 spike 視窗（取代 Slint UI）
+    AcmeShell,
 }
 
 /// 參數解析錯誤（訊息為 zh-TW）
@@ -47,6 +49,7 @@ where
             "--help" | "-h" | "/?" => Ok(Command::Help),
             "--config-path" => Ok(Command::ConfigPath),
             "--self-check" => Ok(Command::SelfCheck),
+            "--acme-shell" => Ok(Command::AcmeShell),
             other => Err(ParseError(format!("未知的參數: {other}"))),
         },
         _ => Err(ParseError(format!(
@@ -74,7 +77,8 @@ pub fn help_text() -> String {
   -V, --version    顯示版本
   --config-path    印出設定檔路徑
   --self-check     不開視窗執行自我檢查（模型清單、範本、設定檔、OpenCC），
-                   全部通過時結束碼為 0，否則為 1",
+                   全部通過時結束碼為 0，否則為 1
+  --acme-shell     （實驗性）以 AcmeUI 外殼取代 Slint 介面",
         name = crate::APP_NAME
     )
 }
@@ -270,7 +274,7 @@ pub fn run_self_check() -> SelfCheckReport {
 /// 執行非 GUI 指令，回傳結束碼。`Command::RunGui` 回傳 `None`。
 pub fn run_headless(command: Command) -> Option<i32> {
     match command {
-        Command::RunGui => None,
+        Command::RunGui | Command::AcmeShell => None,
         Command::Version => {
             println!("{}", version_text());
             Some(0)
