@@ -4,7 +4,7 @@
 
 ## 專案目的
 
-whisper-typeless：Windows 桌面即時語音轉文字工具。Rust + Slint（UI）+ whisper-rs（whisper.cpp 綁定）。辨識結果自動輸入到目前焦點視窗。
+whisper-typeless：Windows 桌面即時語音轉文字工具。Rust + AcmeUI-Native（預設 UI）+ Slint（本版備援）+ whisper-rs（whisper.cpp 綁定）。辨識結果自動輸入到目前焦點視窗。
 
 ## 核心價值（修改時不可倒退）
 
@@ -15,6 +15,16 @@ whisper-typeless：Windows 桌面即時語音轉文字工具。Rust + Slint（UI
 5. **鍵盤優先的浮動 UI**：Liquid Glass 風格；收合 380x52、展開 380x540。
 6. **模型目錄**：`model-catalog.json` 是模型清單、下載網址與校驗值的唯一來源；程式碼與腳本都從它讀取。
 7. **單一小型 exe**：CUDA 為選用（Cargo feature `cuda`）。
+
+## 架構規則（UI 與核心）
+
+- **畫面層只做兩件事**：讀取 `AppViewState` 把畫面畫出來，以及把使用者操作轉成 `UiCommand` 送進 `Controller::handle`。不要在畫面層直接呼叫錄音、模型、剪貼簿或 Backend。
+- **背景執行緒只透過 `Notifier` 通知畫面**：`Notifier::send` 送出 `CoreEvent` 並喚醒畫面執行緒；畫面在自己的執行緒上呼叫 `queue.drain()` → `Controller::apply`。背景執行緒不得直接改動 UI 狀態。
+- **熱鍵與按住說話（PTT）路徑不得取得焦點**：處理 `CoreEvent::HotkeyPressed` / `PttKey` 時，不可顯示、啟用或聚焦視窗。AcmeUI 版只送 `SWP_NOACTIVATE` 的尺寸與置頂請求，不送 `WindowRequest::Focus`；辨識結果必須落在使用者原本的焦點視窗。
+- **新的 UI 行為先加型別**：需要畫面新增的操作，先加到 `UiCommand`、`ViewRequest` 或 `AppViewState`，再由兩個畫面層各自實作。
+- **AcmeUI 相依是固定 git rev**：`Cargo.toml` 的 `acme-core`、`acme-platform`、`acme-text`、`acme-textinput` 與 dev-dependency `acme-render-cpu` 皆指向 `c2e0fd9765d0f25119a240ad1adb378c045df63f`。升級 rev 須刻意為之：四個 crate 一起升、跑完整檢查，並記入 CHANGELOG。不要為了解決其他問題而執行 `cargo update`。
+- **保留 `Cargo.lock` 中的 `gpu-allocator 0.28.0` → `windows 0.62.2`**：重新解析可能把 `windows` 降到 0.54，導致 wgpu-hal 編譯失敗。Cargo.lock 變動後，確認此條目仍在。
+- AcmeUI-Native 的修改在該上游專案進行，不在本專案內修補。
 
 ## 建置、測試、檢查
 
@@ -54,10 +64,31 @@ cargo clippy --all-targets --target x86_64-pc-windows-msvc --no-default-features
 
 ## 模組地圖
 
-- `src/main.rs`：入口；安裝 tracing（含錯誤紀錄 layer），解析 CLI，無參數時啟動 UI。
-- `src/cli.rs`：`--version`、`--help`、`--config-path`、`--self-check`（手寫解析，無額外相依）。
-- `src/lib.rs`：crate 根；`VERSION`、`APP_NAME`、模組宣告，include Slint 產生的模組。
-- `src/app.rs`：`AppState`（錄音狀態、目前模板與模型、設定、模組註冊表、啟動警告）。
+- `src/main.rs`：入口；安裝 tracing（含錯誤紀錄 layer），解析 CLI，無參數時啟動預設 GUI（AcmeUI）。
+- `src/cli.rs`：`--version`、`--help`、`--config-path`、`--self-check`、`--ui acme|slint`（`--acme-shell` 為 `--ui acme` 的別名）；手寫解析，無額外相依。
+- `src/lib.rs`：crate 根；`VERSION`、`APP_NAME`、模組宣告。
+- `src/app.rs`：`AppState`（錄音狀態、目前模板與模型、設定、模組註冊表、啟動警告）；兩個畫面層共用的起點。
+- `src/core/`：與 UI 框架無關的應用邏輯與畫面狀態。**不得引用 Slint 或 acme-* crate。**
+  - `state.rs`：`AppViewState`（畫面唯一讀取的狀態）與清單列型別。
+  - `command.rs`：`UiCommand`（畫面 → 核心）、`ViewRequest`（核心 → 畫面：調整尺寸、隱藏、拖曳）。
+  - `event.rs`：`CoreEvent`（背景 → 核心）。
+  - `controller.rs`：`Controller`（`handle` / `apply` / `state` / `state_mut`）、`Notifier`、`EventQueue`、`event_channel`。
+  - `keys.rs`：`key_to_command`（Esc / Space / E）。
+  - `backend.rs`：`Backend` trait（副作用介面，測試用假實作）。
+  - `services/`：`mod.rs`（`RealBackend`、`initial_state`）；`recording/`（`mod.rs` 控制、`pipeline.rs` 錄音執行緒、`transcribe.rs`、`io.rs`）、`model.rs`、`file_mode.rs`、`hotkey.rs`、`ptt.rs`、`templates.rs`。
+  - `tests.rs`：核心單元測試（假 Backend）。
+- `src/ui_acme/`：預設畫面層（AcmeUI-Native），只是核心的薄轉接層。
+  - `app.rs`：`AcmeApp`（`acme_platform::Application`），擁有 `Controller`，把指標 / 鍵盤 / 輸入法事件轉成 `UiCommand`；`render_backend()` 回傳 `Cpu`（可由環境變數 `ACME_RENDER_BACKEND` 覆寫）。`app_tests.rs` 為對應測試。
+  - `views/`：`AppViewState` → 描述樹的純函式（`live.rs` 緊湊 / 即時、`file.rs` 檔案模式、`settings.rs` 設定、`overlay.rs` 錯誤紀錄浮層、`widgets.rs` 共用元件）。
+  - `paint.rs`：描述樹 → `Painter` 指令與 `HitTestLayer` 命中區域（`HitMap`）。
+  - `controls.rs`：滑桿 / 步進器數學、acme-textinput 文字框（含輸入法組字）。
+  - `theme.rs`：色票（取自 `ui/styles/tokens.slint`）；`text.rs`：zh-TW 文字塑形、換行、省略號。
+  - `local.rs`：只屬於畫面層的狀態（捲動、焦點、選取）；`msg.rs`：命中區域送出的 `Msg`。
+  - `hwnd.rs`：Win32 縮放 / 置頂，一律 `SWP_NOACTIVATE`。
+- `src/ui/`：Slint 備援轉接層（`--ui slint`，本版保留，下一版移除）。
+  - `mod.rs`：`run` 與 `ui_update!` 巨集；`bridge/mod.rs`：callback 接線；`bridge/sync.rs`：設定與狀態同步；`bridge/window.rs`：視窗模式、置頂、拖曳。
+  - `error_log.rs`：WARN/ERROR 環狀緩衝（200 筆）；`window_icon.rs`：工作列 / 標題列圖示（依錄音狀態切換）。
+  - `ui/appwindow.slint`、`ui/components/`、`ui/styles/tokens.slint` 與根目錄 `build.rs`（slint-build）。
 - `src/audio/`：`capture.rs` 麥克風（cpal）、`resampler.rs` 重採樣到 16 kHz、`vad.rs` 能量式靜音偵測；`mod.rs` 共用音訊常數。
 - `src/whisper/`：`engine.rs` 推論、`params.rs` 完整 whisper 參數、`session.rs`。
 - `src/models/`：`registry.rs` 模型目錄（內嵌 + 外部覆寫）、`downloader.rs` 串流下載（備用網址；依校驗值長度選 SHA-1/SHA-256）、`manager.rs` 本機模型掃描。
@@ -66,11 +97,6 @@ cargo clippy --all-targets --target x86_64-pc-windows-msvc --no-default-features
 - `src/output/`：`OutputRouter` 與 `OutputMode`；剪貼簿與鍵盤藏在 `ClipboardSink` / `KeyboardSink` trait 後（測試用 mock）；隱私模式清除剪貼簿在 router 內處理。
 - `src/settings/`：`config.rs` `AppConfig`（唯一持久化設定，`config.toml`）、`persistence.rs`（損毀檔備份為 `.bak`、原子寫入）、`migration.rs`（舊 `settings.json` 一次性匯入）、`ui_settings.rs`（僅記憶體中的 UI 快照：`from_config` / `apply_to`）、`mod.rs` 模組開關。
 - `src/file_transcription/`：音檔解碼（symphonia）與 TXT / SRT / VTT 匯出。
-- `src/ui/`：`mod.rs` 啟動 UI 與 `ui_update!` 巨集、`error_log.rs` WARN/ERROR 環狀緩衝（200 筆）推送到 UI、`window_icon.rs`。
-- `src/ui/bridge/`：`mod.rs` callback 接線與設定同步、`window.rs` 視窗模式/置頂/拖曳/錯誤紀錄、`model.rs` 模型選擇與下載、`recording/`（`mod.rs` 錄音控制、`pipeline.rs` 錄音執行緒、`transcribe.rs` 轉錄→pipeline→router、`io.rs` WAV）、`hotkey.rs` 全域快捷鍵、`ptt.rs` 按住說話、`templates.rs`、`file_mode.rs`。
-- `ui/appwindow.slint`：主視窗、鍵盤（Esc / Space / E）、完整與浮動視窗切換、錯誤紀錄覆蓋層。
-- `ui/components/`：`compact_bar`、`quick_actions`、`context_bar`、`model_picker`、`settings_panel`（含隱私模式）、`file_mode`、`transcript`、`waveform`、`toggle`。
-- `ui/styles/tokens.slint`：設計 token。
 - `templates/*.toml`：內建情境模板。
 - `tests/`：整合測試。
 - `scripts/dev.ps1`：`check|test|lint|fmt|build|release|clean|doctor` [-Cuda]；`scripts/setup-env.ps1`（CUDA 環境）、`scripts/download-model.ps1`。

@@ -1,7 +1,41 @@
 # whisper-typeless — 知識圖譜（架構說明）
 
 > 狀態：以圖表說明模組關係與資料流。細節以原始碼為準；模組一覽見 [AGENTS.md](../AGENTS.md)。
-> 注意：本文件中的「鍵盤映射」與「v2.0 UI」段落描述的是規格，目前視窗內只實作 Esc（見 [路線圖](roadmap.md)）。
+> 注意：本文件中的「鍵盤映射」與「v2.0 UI」段落描述的是規格，目前實作的快捷鍵見 [README](../README.md)。
+
+## 0. 現行架構（v0.4.0：AcmeUI 預設、Slint 備援）
+
+以下為目前程式的資料流（對應 `src/core/mod.rs` 的 API 說明）。第 1 節起的圖多為較早期設計，模組與檔案對應以 [AGENTS.md](../AGENTS.md) 為準。
+
+```text
+ 背景服務（熱鍵 / PTT / 錄音 / 模型 / 檔案，各自的執行緒）
+      │ CoreEvent
+      ▼
+ Notifier::send ──wake──▶ 畫面執行緒
+                              │
+                              ▼
+                 queue.drain() → Controller::apply
+                              │
+                              ▼
+                       AppViewState（唯一的畫面狀態）
+                              │
+                              ▼
+            view fn（ui_acme/views）→ 描述樹 → paint_view
+                              │
+                              ▼
+                  Scene（AcmeUI 繪製指令）→ 螢幕
+
+ 使用者輸入（滑鼠 / 鍵盤 / 輸入法）
+      │ 命中 Msg 或 keys::key_to_command
+      ▼
+ UiCommand ──▶ Controller::handle ──▶ Backend（呼叫服務）
+                    │
+                    └──▶ ViewRequest（尺寸 / 置頂 / 隱藏 / 拖曳）→ 畫面層執行（hwnd.rs，不搶焦點）
+```
+
+Slint 備援（`src/ui/bridge/`）與 AcmeUI 共用同一個 `Controller` 與 `AppViewState`，只換掉最外層的畫面轉接。
+
+---
 
 ## 節點類型說明
 - **[模組]** 可開關的功能單元
@@ -187,7 +221,7 @@
     └── module_registry: Arc<RwLock<ModuleRegistry>>
 ```
 
-### 2.8 Slint GUI 元件樹
+### 2.8 Slint GUI 元件樹（備援，v0.4.0 起非預設）
 
 ```
 AppWindow (appwindow.slint)
@@ -427,3 +461,4 @@ AppError
 | 版本 | 日期 | 內容 |
 |------|------|------|
 | v2.0 | 2026-05-16 | UI 重設計：新增 CompactBar/QuickActions/ErrorLogOverlay 節點與 Liquid Glass token 群 |
+| v0.4.0 | 2026-11-19 | GUI 改為 AcmeUI-Native（預設），Slint 降為備援；核心抽離為 `src/core/` |
