@@ -78,7 +78,7 @@ acme-render-cpu = { git = "https://github.com/stevenke1981/AcmeUI-Native", rev =
 slint-build = "1.7"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["winuser", "processthreadsapi", "wingdi", "handleapi", "fileapi", "processenv", "winbase", "wincon"] }
+winapi = { version = "0.3", features = ["winuser", "processthreadsapi", "wingdi", "handleapi", "fileapi", "processenv", "winbase", "wincon", "shellapi", "libloaderapi"] }
 raw-window-handle = "0.6"
 
 [features]

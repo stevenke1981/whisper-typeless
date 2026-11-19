@@ -173,7 +173,15 @@ impl Controller {
                 s.floating_expanded = on;
                 return vec![ViewRequest::ApplyWindowGeometry];
             }
-            UiCommand::RequestClose => return vec![ViewRequest::HideWindow],
+            // 關閉鈕：縮到系統匣（畫面層沒有系統匣時改為關閉視窗），或直接結束。
+            UiCommand::RequestClose => {
+                if s.close_to_tray {
+                    s.window_hidden = true;
+                    return vec![ViewRequest::HideWindow];
+                }
+                s.quit_requested = true;
+                return vec![ViewRequest::Quit];
+            }
             UiCommand::StartDrag => return vec![ViewRequest::StartDrag],
             UiCommand::ClearErrorLog => {
                 self.backend.clear_error_log();

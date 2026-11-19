@@ -14,6 +14,7 @@ pub mod models;
 pub mod output;
 pub mod settings;
 pub mod transcription;
+pub mod tray;
 pub mod ui;
 pub mod ui_acme;
 pub mod whisper;

@@ -5,7 +5,12 @@
 //!   `EventQueue::drain` → `Controller::apply`。
 //! - 指標：`ClickDetector` + `HitTestLayer` → [`Action`] → [`Msg`] → `Controller::handle`。
 //! - 鍵盤：文字框有焦點時交給 acme-textinput；否則 `core::keys::key_to_command`。
-//! - `ViewRequest`：尺寸 / 置頂走 [`hwnd`]（`SWP_NOACTIVATE`）、隱藏 = 關閉視窗、拖曳 = `DragMove`。
+//! - `ViewRequest`：尺寸 / 置頂走 [`hwnd`]（`SWP_NOACTIVATE`）、拖曳 = `DragMove`；隱藏 = 縮到系統匣
+//!   （`SW_HIDE`；沒有系統匣時退回關閉視窗）。
+//! - 系統匣（[`crate::tray`]）：`AppViewState::window_hidden` / `quit_requested` 由核心設定，
+//!   [`AcmeApp::after_state_change`] 比對實際視窗狀態後呼叫 [`hwnd::hide`] / [`hwnd::show`]。
+//!   只有使用者操作（系統匣、`ShowWindow`）會啟用視窗；熱鍵 / PTT 不碰 `window_hidden`。
+//!   視窗隱藏時錄音、熱鍵與 PTT 服務照常運作；浮動列也一併隱藏（不另外顯示）。
 //! - 熱鍵 / PTT 只會改核心狀態，**永遠不會**送出 `WindowRequest::Focus` 或啟用視窗。
 
 use std::sync::{Arc, Mutex};
@@ -30,6 +35,7 @@ use super::theme::Theme;
 use super::views::{self, widgets::FONT_SM, window_size, Ctx, BAR_H, BAR_W};
 use crate::core::keys::{key_to_command, Key, KeyPress, Modifiers};
 use crate::core::{AppViewState, Controller, EventQueue, UiCommand, ViewRequest};
+use crate::tray::TrayHandle;
 
 /// 錄音 / 處理中的動畫更新間隔。
 pub const ANIMATION_INTERVAL: Duration = Duration::from_millis(33);
@@ -72,6 +78,14 @@ pub struct AcmeApp {
     last_recording: bool,
     /// 已畫過至少一個 frame（DPI 縮放已知），之後才能以實體像素調整視窗。
     frame_seen: bool,
+    /// 系統匣圖示（Drop 時移除圖示）。
+    tray: Option<TrayHandle>,
+    /// 系統匣可用：關閉 / 最小化才能安全地隱藏視窗。
+    tray_ok: bool,
+    /// 視窗目前實際是否顯示（與 `window_hidden` 比對後才動作）。
+    shown: bool,
+    /// 已決定結束（`close_requested` 不再否決）。
+    quitting: bool,
     #[cfg(test)]
     sent: Vec<UiCommand>,
     #[cfg(test)]
@@ -105,11 +119,26 @@ impl AcmeApp {
             clipboard: None,
             last_recording,
             frame_seen: false,
+            tray: None,
+            tray_ok: false,
+            shown: true,
+            quitting: false,
             #[cfg(test)]
             sent: Vec::new(),
             #[cfg(test)]
             last_tree: super::paint::View::new(),
         }
+    }
+
+    /// 掛上系統匣（`None` = 無系統匣：關閉視窗即結束）。`start_minimized` 時視窗在第一個 frame 後隱藏。
+    pub fn with_tray(mut self, tray: Option<TrayHandle>) -> Self {
+        self.tray_ok = tray.is_some();
+        self.tray = tray;
+        if self.tray_ok && self.controller.state().start_minimized {
+            self.controller.state_mut().window_hidden = true;
+        }
+        self.sync_tray_state();
+        self
     }
 
     pub fn state(&self) -> &AppViewState {
@@ -178,12 +207,18 @@ impl AcmeApp {
     fn perform(&mut self, request: ViewRequest) {
         match request {
             ViewRequest::ApplyWindowGeometry => self.geometry_pending = true,
-            ViewRequest::HideWindow => self.requests.push(WindowRequest::Close),
+            // 有系統匣：核心已設 window_hidden，由 sync_visibility 隱藏；否則照舊關閉（結束）。
+            ViewRequest::HideWindow => {
+                if self.tray_ok {
+                    self.controller.state_mut().window_hidden = true;
+                } else {
+                    self.request_quit();
+                }
+            }
             ViewRequest::StartDrag => self.start_drag(),
-            // WP-B：從系統匣叫回視窗（需 SW_SHOW；目前視窗不會被隱藏，先不處理）。
-            ViewRequest::ShowWindow => {}
-            // WP-B：改為結束事件迴圈並移除系統匣圖示。
-            ViewRequest::Quit => self.requests.push(WindowRequest::Close),
+            // 使用者操作：視窗由 sync_visibility 顯示並取得焦點。
+            ViewRequest::ShowWindow => self.controller.state_mut().window_hidden = false,
+            ViewRequest::Quit => self.request_quit(),
         }
     }
 
@@ -199,6 +234,59 @@ impl AcmeApp {
         if recording != self.last_recording {
             self.last_recording = recording;
             crate::ui::window_icon::update(recording);
+            if let Some(tray) = &self.tray {
+                tray.set_recording(recording);
+            }
+        }
+        if self.controller.state().quit_requested {
+            self.request_quit();
+        }
+        self.sync_visibility();
+        self.sync_tray_state();
+    }
+
+    fn sync_tray_state(&self) {
+        if let Some(tray) = &self.tray {
+            tray.set_recording(self.controller.state().is_recording);
+            tray.set_window_hidden(self.controller.state().window_hidden);
+        }
+    }
+
+    /// 結束程式（只送一次 Close；之後 `close_requested` 不再否決）。
+    fn request_quit(&mut self) {
+        if !self.quitting {
+            self.quitting = true;
+            self.controller.state_mut().quit_requested = true;
+            self.requests.push(WindowRequest::Close);
+        }
+    }
+
+    /// 讓實際視窗與 `window_hidden` 一致。需要 HWND（要在視窗可見時先快取）；
+    /// 找不到時保持現狀，下次再試。顯示一律由使用者操作觸發，故允許啟用視窗。
+    fn sync_visibility(&mut self) {
+        let Some(action) =
+            hwnd::visibility_action(self.controller.state().window_hidden, self.shown)
+        else {
+            return;
+        };
+        let Some(h) = self.hwnd else { return };
+        match action {
+            hwnd::Visibility::Hide => {
+                hwnd::hide(h);
+                self.shown = false;
+            }
+            hwnd::Visibility::Show => {
+                hwnd::show(h, true);
+                self.shown = true;
+                self.geometry_pending = true;
+            }
+        }
+    }
+
+    /// 快取自己的 HWND（隱藏後 `find_own_hwnd` 就找不到了）。
+    fn cache_hwnd(&mut self) {
+        if self.hwnd.is_none() && self.shown {
+            self.hwnd = hwnd::find_own_hwnd(&self.controller.state().app_title);
         }
     }
 
@@ -230,7 +318,14 @@ impl AcmeApp {
                 self.ui.pinned = !self.ui.pinned;
                 self.geometry_pending = true;
             }
-            Msg::Minimize => self.requests.push(WindowRequest::Minimize),
+            Msg::Minimize => {
+                if self.tray_ok && self.controller.state().minimize_to_tray {
+                    self.controller.state_mut().window_hidden = true;
+                    self.after_state_change();
+                } else {
+                    self.requests.push(WindowRequest::Minimize);
+                }
+            }
             Msg::RecordPress => {
                 if !recording {
                     self.send(UiCommand::ToggleRecording);
@@ -540,9 +635,7 @@ impl AcmeApp {
         if !self.geometry_pending || !self.frame_seen {
             return;
         }
-        if self.hwnd.is_none() {
-            self.hwnd = hwnd::find_own_hwnd(&self.controller.state().app_title);
-        }
+        self.cache_hwnd();
         let Some(h) = self.hwnd else { return };
         self.geometry_pending = false;
         let s = self.controller.state();
@@ -616,7 +709,12 @@ impl Application for AcmeApp {
     }
 
     fn take_window_requests(&mut self, _window: WindowId) -> Vec<WindowRequest> {
+        self.cache_hwnd();
         self.apply_geometry();
+        if self.frame_seen {
+            // 第一個 frame 之後才隱藏（start_minimized）。
+            self.sync_visibility();
+        }
         let want_ime = self.ui.focus.is_some();
         if self.ime_allowed != Some(want_ime) {
             self.ime_allowed = Some(want_ime);
@@ -697,11 +795,36 @@ impl Application for AcmeApp {
             },
             PlatformEvent::FocusChanged { gained: false, .. } => {
                 self.release_hold();
+                // 工作列最小化沒有專屬事件：失去焦點時檢查是否被最小化。
+                if self.tray_ok && self.controller.state().minimize_to_tray && self.shown {
+                    if let Some(h) = self.hwnd {
+                        if hwnd::is_iconic(h) {
+                            self.controller.state_mut().window_hidden = true;
+                            self.after_state_change();
+                        }
+                    }
+                }
                 true
             }
             PlatformEvent::Resized { .. } | PlatformEvent::FocusChanged { .. } => true,
             _ => false,
         }
+    }
+
+    /// 關閉鈕 / Alt+F4 / 工作列關閉：有系統匣且啟用「關閉時縮到系統匣」就否決並隱藏。
+    fn close_requested(&mut self, _window: WindowId) -> bool {
+        if self.quitting {
+            return true;
+        }
+        let s = self.controller.state();
+        if self.tray_ok && s.close_to_tray {
+            self.controller.state_mut().window_hidden = true;
+            self.after_state_change();
+            return false;
+        }
+        self.quitting = true;
+        self.controller.state_mut().quit_requested = true;
+        true
     }
 
     fn on_gpu_recovered(&mut self, _window: WindowId) {

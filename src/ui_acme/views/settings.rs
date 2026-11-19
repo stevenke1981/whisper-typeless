@@ -8,7 +8,8 @@ use super::widgets::{
     toggle_row, FONT_LG, FONT_SM, FONT_XS, RADIUS_SM,
 };
 use super::Ctx;
-use crate::core::UiCommand;
+use crate::core::{AppViewState, UiCommand};
+use crate::settings::UiSettings;
 use crate::ui_acme::controls::step_value;
 use crate::ui_acme::msg::{FieldId, ModKey, Msg, ScrollId, SettingEdit, SliderKind};
 use crate::ui_acme::paint::{r, View};
@@ -93,8 +94,68 @@ fn cloud_section(_v: &mut View, _cx: &mut Ctx<'_>, _x0: f32, _y: f32, _cw: f32) 
 }
 
 /// 系統匣：關閉 / 最小化到系統匣、啟動時最小化（WP-B）。
-fn tray_section(_v: &mut View, _cx: &mut Ctx<'_>, _x0: f32, _y: f32, _cw: f32) -> f32 {
-    0.0
+fn tray_section(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y: f32, cw: f32) -> f32 {
+    let t = cx.t;
+    let s = cx.s;
+    let start = y;
+    let mut y = y;
+    y += section_header(v, t, x0, y, cw, "系統匣");
+    for (label, on, edit) in tray_toggles(s) {
+        y += toggle_row(v, t, x0, y, cw, label, on, edit);
+    }
+    y - start
+}
+
+/// 系統匣三個開關：（文字、目前值、按下後送出的指令）。純函式，供測試。
+fn tray_toggles(s: &AppViewState) -> [(&'static str, bool, UiCommand); 3] {
+    let flip = |f: fn(&mut UiSettings)| {
+        let mut snap = s.ui_settings();
+        f(&mut snap);
+        UiCommand::UpdateSettings(Box::new(snap))
+    };
+    [
+        (
+            "關閉視窗時縮小到系統匣",
+            s.close_to_tray,
+            flip(|u| u.close_to_tray = !u.close_to_tray),
+        ),
+        (
+            "最小化時縮小到系統匣",
+            s.minimize_to_tray,
+            flip(|u| u.minimize_to_tray = !u.minimize_to_tray),
+        ),
+        (
+            "啟動時縮小到系統匣",
+            s.start_minimized,
+            flip(|u| u.start_minimized = !u.start_minimized),
+        ),
+    ]
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)] // 緊鄰 tray_toggles，避免與其他工作包在檔尾衝突
+mod tray_toggle_tests {
+    use super::*;
+
+    #[test]
+    fn tray_toggles_flip_only_their_own_flag() {
+        let s = AppViewState::default();
+        let toggles = tray_toggles(&s);
+        let base = s.ui_settings();
+        let snaps: Vec<UiSettings> = toggles
+            .iter()
+            .map(|(_, _, c)| match c {
+                UiCommand::UpdateSettings(u) => (**u).clone(),
+                other => panic!("非設定指令: {other:?}"),
+            })
+            .collect();
+        assert_eq!(toggles[0].1, base.close_to_tray);
+        assert_eq!(snaps[0].close_to_tray, !base.close_to_tray);
+        assert_eq!(snaps[1].minimize_to_tray, !base.minimize_to_tray);
+        assert_eq!(snaps[2].start_minimized, !base.start_minimized);
+        assert_eq!(snaps[0].minimize_to_tray, base.minimize_to_tray);
+        assert!(toggles.iter().all(|(label, _, _)| label.contains("系統匣")));
+    }
 }
 
 /// GPU 後端 / 模型建議（WP-C）。

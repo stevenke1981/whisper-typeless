@@ -755,3 +755,43 @@ fn window_and_tray_contract() {
     assert!(c.state().quit_requested);
     assert_eq!(c.handle(UiCommand::Quit), vec![ViewRequest::Quit]);
 }
+
+#[test]
+fn close_goes_to_tray_or_quits_by_setting() {
+    let (mut c, _fake) = controller();
+    c.state_mut().close_to_tray = true;
+    assert_eq!(
+        c.handle(UiCommand::RequestClose),
+        vec![ViewRequest::HideWindow]
+    );
+    assert!(c.state().window_hidden && !c.state().quit_requested);
+
+    c.handle(UiCommand::ShowWindow);
+    assert!(!c.state().window_hidden);
+
+    c.state_mut().close_to_tray = false;
+    assert_eq!(c.handle(UiCommand::RequestClose), vec![ViewRequest::Quit]);
+    assert!(c.state().quit_requested && !c.state().window_hidden);
+}
+
+#[test]
+fn hotkey_and_ptt_never_show_or_hide_window() {
+    let (mut c, _fake) = controller();
+    c.apply(CoreEvent::Tray(TrayAction::ToggleWindow));
+    assert!(c.state().window_hidden);
+    c.apply(CoreEvent::HotkeyPressed);
+    c.apply(CoreEvent::HotkeyPressed);
+    assert!(c.state().window_hidden, "熱鍵不得叫出視窗");
+    c.apply(CoreEvent::Tray(TrayAction::ToggleWindow));
+    assert!(!c.state().window_hidden);
+}
+
+#[test]
+fn tray_toggle_recording_keeps_window_state() {
+    let (mut c, _fake) = controller();
+    c.apply(CoreEvent::Tray(TrayAction::ToggleWindow));
+    c.apply(CoreEvent::Tray(TrayAction::ToggleRecording));
+    assert!(c.state().is_recording && c.state().window_hidden);
+    c.apply(CoreEvent::Tray(TrayAction::ToggleRecording));
+    assert!(!c.state().is_recording);
+}
