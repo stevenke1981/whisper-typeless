@@ -113,6 +113,16 @@ version = "0.2.0"
 source = "git+https://github.com/stevenke1981/AcmeUI-Native?rev=c2e0fd9765d0f25119a240ad1adb378c045df63f#c2e0fd9765d0f25119a240ad1adb378c045df63f"
 
 [[package]]
+name = "acme-layout"
+version = "0.2.0"
+source = "git+https://github.com/stevenke1981/AcmeUI-Native?rev=c2e0fd9765d0f25119a240ad1adb378c045df63f#c2e0fd9765d0f25119a240ad1adb378c045df63f"
+dependencies = [
+ "acme-core",
+ "acme-text",
+ "taffy",
+]
+
+[[package]]
 name = "acme-platform"
 version = "0.2.0"
 source = "git+https://github.com/stevenke1981/AcmeUI-Native?rev=c2e0fd9765d0f25119a240ad1adb378c045df63f#c2e0fd9765d0f25119a240ad1adb378c045df63f"
@@ -152,11 +162,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "acme-style"
+version = "0.2.0"
+source = "git+https://github.com/stevenke1981/AcmeUI-Native?rev=c2e0fd9765d0f25119a240ad1adb378c045df63f#c2e0fd9765d0f25119a240ad1adb378c045df63f"
+dependencies = [
+ "acme-core",
+ "acme-layout",
+ "acme-theme",
+]
+
+[[package]]
 name = "acme-text"
 version = "0.2.0"
 source = "git+https://github.com/stevenke1981/AcmeUI-Native?rev=c2e0fd9765d0f25119a240ad1adb378c045df63f#c2e0fd9765d0f25119a240ad1adb378c045df63f"
 dependencies = [
  "cosmic-text",
+]
+
+[[package]]
+name = "acme-textinput"
+version = "0.2.0"
+source = "git+https://github.com/stevenke1981/AcmeUI-Native?rev=c2e0fd9765d0f25119a240ad1adb378c045df63f#c2e0fd9765d0f25119a240ad1adb378c045df63f"
+dependencies = [
+ "acme-core",
+ "acme-layout",
+ "acme-platform",
+ "acme-text",
+ "acme-theme",
+ "acme-widgets",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "acme-theme"
+version = "0.2.0"
+source = "git+https://github.com/stevenke1981/AcmeUI-Native?rev=c2e0fd9765d0f25119a240ad1adb378c045df63f#c2e0fd9765d0f25119a240ad1adb378c045df63f"
+dependencies = [
+ "acme-core",
+]
+
+[[package]]
+name = "acme-widgets"
+version = "0.2.0"
+source = "git+https://github.com/stevenke1981/AcmeUI-Native?rev=c2e0fd9765d0f25119a240ad1adb378c045df63f#c2e0fd9765d0f25119a240ad1adb378c045df63f"
+dependencies = [
+ "acme-core",
+ "acme-layout",
+ "acme-style",
+ "acme-theme",
 ]
 
 [[package]]
@@ -7263,6 +7316,7 @@ dependencies = [
  "acme-platform",
  "acme-render-cpu",
  "acme-text",
+ "acme-textinput",
  "anyhow",
  "arboard",
  "bytes",

@@ -1,6 +1,7 @@
 //! 命令列介面（手寫解析，不引入額外依賴）。
 //!
-//! - 無參數：啟動 GUI
+//! - 無參數：啟動 GUI（AcmeUI-Native）
+//! - `--ui acme|slint`：指定介面（`--ui slint` 為本版保留的 Slint 備援；`--acme-shell` = `--ui acme`）
 //! - `--version` / `-V`、`--help` / `-h` / `/?`
 //! - `--config-path`：印出設定檔路徑
 //! - `--self-check`：無介面自我檢查（模型 catalog、範本、設定檔、OpenCC），通過 exit 0，否則 exit 1
@@ -12,15 +13,35 @@ use crate::models::ModelRegistry;
 use crate::settings::AppConfig;
 use crate::transcription::opencc::{ConversionMode, OpenCCProcessor};
 
+/// 圖形介面實作。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Gui {
+    /// AcmeUI-Native（預設）。
+    #[default]
+    Acme,
+    /// Slint（本版保留的備援）。
+    Slint,
+}
+
+impl Gui {
+    fn parse(value: &str) -> Result<Self, ParseError> {
+        match value {
+            "acme" => Ok(Gui::Acme),
+            "slint" => Ok(Gui::Slint),
+            other => Err(ParseError(format!(
+                "未知的介面: {other}（可用：acme、slint）"
+            ))),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
-    RunGui,
+    RunGui(Gui),
     Version,
     Help,
     ConfigPath,
     SelfCheck,
-    /// AcmeUI 外殼 spike 視窗（取代 Slint UI）
-    AcmeShell,
 }
 
 /// 參數解析錯誤（訊息為 zh-TW）
@@ -43,14 +64,20 @@ where
 {
     let args: Vec<String> = args.into_iter().map(|a| a.as_ref().to_string()).collect();
     match args.as_slice() {
-        [] => Ok(Command::RunGui),
+        [] => Ok(Command::RunGui(Gui::default())),
+        [flag, value] if flag == "--ui" => Gui::parse(value).map(Command::RunGui),
         [one] => match one.as_str() {
             "--version" | "-V" => Ok(Command::Version),
             "--help" | "-h" | "/?" => Ok(Command::Help),
             "--config-path" => Ok(Command::ConfigPath),
             "--self-check" => Ok(Command::SelfCheck),
-            "--acme-shell" => Ok(Command::AcmeShell),
-            other => Err(ParseError(format!("未知的參數: {other}"))),
+            // 舊的 spike 旗標，保留為 --ui acme 的別名
+            "--acme-shell" => Ok(Command::RunGui(Gui::Acme)),
+            "--ui" => Err(ParseError("--ui 需要指定 acme 或 slint".into())),
+            other => match other.strip_prefix("--ui=") {
+                Some(value) => Gui::parse(value).map(Command::RunGui),
+                None => Err(ParseError(format!("未知的參數: {other}"))),
+            },
         },
         _ => Err(ParseError(format!(
             "一次只能指定一個參數（收到 {} 個）",
@@ -72,13 +99,13 @@ pub fn help_text() -> String {
   whisper-typeless [選項]
 
 選項:
-  (無)             啟動圖形介面
+  (無)             啟動圖形介面（AcmeUI）
+  --ui acme|slint  指定介面：acme（預設）或 slint（備援）
   -h, --help       顯示此說明
   -V, --version    顯示版本
   --config-path    印出設定檔路徑
   --self-check     不開視窗執行自我檢查（模型清單、範本、設定檔、OpenCC），
-                   全部通過時結束碼為 0，否則為 1
-  --acme-shell     （實驗性）以 AcmeUI 外殼取代 Slint 介面",
+                   全部通過時結束碼為 0，否則為 1",
         name = crate::APP_NAME
     )
 }
@@ -274,7 +301,7 @@ pub fn run_self_check() -> SelfCheckReport {
 /// 執行非 GUI 指令，回傳結束碼。`Command::RunGui` 回傳 `None`。
 pub fn run_headless(command: Command) -> Option<i32> {
     match command {
-        Command::RunGui | Command::AcmeShell => None,
+        Command::RunGui(_) => None,
         Command::Version => {
             println!("{}", version_text());
             Some(0)
@@ -320,7 +347,25 @@ mod tests {
 
     #[test]
     fn no_args_runs_gui() {
-        assert_eq!(parse_args(Vec::<String>::new()), Ok(Command::RunGui));
+        assert_eq!(
+            parse_args(Vec::<String>::new()),
+            Ok(Command::RunGui(Gui::Acme))
+        );
+    }
+
+    #[test]
+    fn ui_choice_and_acme_shell_alias() {
+        assert_eq!(parse_args(["--ui", "acme"]), Ok(Command::RunGui(Gui::Acme)));
+        assert_eq!(
+            parse_args(["--ui", "slint"]),
+            Ok(Command::RunGui(Gui::Slint))
+        );
+        assert_eq!(parse_args(["--ui=slint"]), Ok(Command::RunGui(Gui::Slint)));
+        assert_eq!(parse_args(["--acme-shell"]), Ok(Command::RunGui(Gui::Acme)));
+        assert!(parse_args(["--ui"]).is_err());
+        assert!(parse_args(["--ui", "qt"]).unwrap_err().0.contains("qt"));
+        assert!(parse_args(["--ui", "acme", "--help"]).is_err());
+        assert!(help_text().contains("--ui"));
     }
 
     #[test]
@@ -400,6 +445,7 @@ mod tests {
 
     #[test]
     fn run_headless_gui_returns_none() {
-        assert_eq!(run_headless(Command::RunGui), None);
+        assert_eq!(run_headless(Command::RunGui(Gui::Acme)), None);
+        assert_eq!(run_headless(Command::RunGui(Gui::Slint)), None);
     }
 }

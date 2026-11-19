@@ -1,10 +1,13 @@
-//! 文字輔助：塑形並繪製 zh-TW（CJK）文字。
+//! 文字輔助：塑形並繪製 zh-TW（CJK）文字，含自動換行、省略號與量測快取。
+
+use std::collections::HashMap;
 
 use acme_core::{
     AtlasUpload, Color, GlyphDraw, GlyphFormat, Logical, Painter, Point, Rect, TextPrimitive,
 };
 use acme_text::{
-    AtlasFormat, FontSystem, GlyphAtlas, GlyphAtlasConfig, TextConstraints, TextStyle,
+    AtlasFormat, FontSystem, GlyphAtlas, GlyphAtlasConfig, TextConstraints, TextLayout, TextStyle,
+    TextWrap,
 };
 
 /// 水平對齊方式。
@@ -12,15 +15,32 @@ use acme_text::{
 pub enum Align {
     Start,
     Center,
+    End,
 }
 
 /// 優先使用的繁中字型家族；找不到時由 cosmic-text 的系統後備字型接手。
 pub const CJK_FAMILY: &str = "Microsoft JhengHei";
 
+/// 省略號。
+pub const ELLIPSIS: &str = "…";
+
+/// 快取上限（超過就整個清空；畫面上的字串數量遠小於此）。
+const CACHE_LIMIT: usize = 2048;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct LayoutKey {
+    content: String,
+    size: u32,
+    bold: bool,
+    wrap_width: Option<u32>,
+    scale: u32,
+}
+
 /// 擁有字型系統與（針對 CJK 加大頁面預算的）字形圖集。
 pub struct TextEngine {
     fonts: FontSystem,
     atlas: GlyphAtlas,
+    cache: HashMap<LayoutKey, TextLayout>,
 }
 
 impl Default for TextEngine {
@@ -40,6 +60,7 @@ impl TextEngine {
         Self {
             fonts: FontSystem::new(),
             atlas,
+            cache: HashMap::new(),
         }
     }
 
@@ -53,6 +74,16 @@ impl TextEngine {
         self.atlas.clear();
     }
 
+    /// 字型系統（給 acme-textinput 量測游標位置）。
+    pub fn fonts_mut(&mut self) -> &mut FontSystem {
+        &mut self.fonts
+    }
+
+    /// 是否有任何系統字型（CI 機器可能沒有）。
+    pub fn has_fonts(&self) -> bool {
+        self.fonts.diagnostics().system_faces > 0
+    }
+
     pub fn style(size: f32, bold: bool) -> TextStyle {
         TextStyle {
             font_size: size,
@@ -63,42 +94,101 @@ impl TextEngine {
         }
     }
 
-    /// 量測文字寬度（邏輯像素）。
-    pub fn measure_width(&mut self, content: &str, size: f32, bold: bool) -> f32 {
-        let style = Self::style(size, bold);
-        self.fonts
-            .measure(content, &style, TextConstraints::default())
-            .width
+    fn constraints(wrap_width: Option<f32>) -> TextConstraints {
+        match wrap_width {
+            Some(w) => TextConstraints {
+                max_width: Some(w.max(1.0)),
+                wrap: TextWrap::WordOrGlyph,
+            },
+            None => TextConstraints::default(),
+        }
     }
 
-    /// 在 `rect` 內垂直置中塑形，回傳可交給 `Painter` 的 `TextPrimitive`。
-    #[allow(clippy::too_many_arguments)]
-    pub fn primitive(
+    fn layout(
         &mut self,
         content: &str,
-        rect: Rect<Logical>,
         size: f32,
         bold: bool,
-        color: Color,
-        align: Align,
+        wrap_width: Option<f32>,
         scale: f32,
-    ) -> TextPrimitive {
-        let style = Self::style(size, bold);
-        let measured = self
-            .fonts
-            .measure(content, &style, TextConstraints::default());
-        let (rx, ry) = (rect.origin.x.get(), rect.origin.y.get());
-        let (rw, rh) = (rect.size.width.get(), rect.size.height.get());
-        let x = match align {
-            Align::Start => rx,
-            Align::Center => rx + (rw - measured.width) / 2.0,
+    ) -> &TextLayout {
+        let key = LayoutKey {
+            content: content.to_string(),
+            size: size.to_bits(),
+            bold,
+            wrap_width: wrap_width.map(f32::to_bits),
+            scale: scale.to_bits(),
         };
-        let y = ry + (rh - measured.height) / 2.0 + measured.baseline;
-        let layout = self
-            .fonts
-            .shape(content, &style, TextConstraints::default(), scale);
-        let prepared = self.fonts.prepare(&layout, &mut self.atlas);
+        if self.cache.len() >= CACHE_LIMIT && !self.cache.contains_key(&key) {
+            self.cache.clear();
+        }
+        let fonts = &mut self.fonts;
+        self.cache.entry(key).or_insert_with(|| {
+            fonts.shape(
+                content,
+                &Self::style(size, bold),
+                Self::constraints(wrap_width),
+                scale,
+            )
+        })
+    }
 
+    /// 單行文字寬度（邏輯像素）。
+    pub fn measure_width(&mut self, content: &str, size: f32, bold: bool) -> f32 {
+        if content.is_empty() {
+            return 0.0;
+        }
+        self.layout(content, size, bold, None, 1.0).width
+    }
+
+    /// 在寬度 `width` 內自動換行後的高度（邏輯像素）。
+    pub fn measure_wrapped(&mut self, content: &str, size: f32, width: f32) -> f32 {
+        if content.is_empty() {
+            return size * 1.3;
+        }
+        let layout = self.layout(content, size, false, Some(width), 1.0);
+        layout.height.max(size * 1.3)
+    }
+
+    /// 超出 `max_width` 時截斷並加上省略號。
+    pub fn elide(&mut self, content: &str, size: f32, bold: bool, max_width: f32) -> String {
+        if self.measure_width(content, size, bold) <= max_width {
+            return content.to_string();
+        }
+        // boundaries[k] = 前 k 個字元的位元組長度。
+        let boundaries: Vec<usize> = content
+            .char_indices()
+            .map(|(i, _)| i)
+            .chain(std::iter::once(content.len()))
+            .collect();
+        let style = Self::style(size, bold);
+        let (mut lo, mut hi) = (0usize, boundaries.len().saturating_sub(2));
+        while lo < hi {
+            let mid = (lo + hi).div_ceil(2);
+            let candidate = format!("{}{ELLIPSIS}", &content[..boundaries[mid]]);
+            let w = self
+                .fonts
+                .measure(&candidate, &style, TextConstraints::default())
+                .width;
+            if w <= max_width {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        if lo == 0 {
+            return ELLIPSIS.to_string();
+        }
+        format!("{}{ELLIPSIS}", &content[..boundaries[lo]])
+    }
+
+    fn primitive_from_layout(
+        &mut self,
+        key_layout: TextLayout,
+        origin: Point<Logical>,
+        color: Color,
+    ) -> TextPrimitive {
+        let prepared = self.fonts.prepare(&key_layout, &mut self.atlas);
         let uploads = prepared
             .uploads
             .into_iter()
@@ -125,11 +215,52 @@ impl TextEngine {
             })
             .collect();
         TextPrimitive {
-            origin: Point::new(x, y),
+            origin,
             color,
             glyphs,
             uploads,
         }
+    }
+
+    /// 單行：在 `rect` 內垂直置中塑形，回傳可交給 `Painter` 的 `TextPrimitive`。
+    #[allow(clippy::too_many_arguments)]
+    pub fn primitive(
+        &mut self,
+        content: &str,
+        rect: Rect<Logical>,
+        size: f32,
+        bold: bool,
+        color: Color,
+        align: Align,
+        scale: f32,
+    ) -> TextPrimitive {
+        let layout = self.layout(content, size, bold, None, scale).clone();
+        let (rx, ry) = (rect.origin.x.get(), rect.origin.y.get());
+        let (rw, rh) = (rect.size.width.get(), rect.size.height.get());
+        let x = match align {
+            Align::Start => rx,
+            Align::Center => rx + (rw - layout.width) / 2.0,
+            Align::End => rx + rw - layout.width,
+        };
+        let y = ry + (rh - layout.height) / 2.0 + layout.baseline;
+        self.primitive_from_layout(layout, Point::new(x, y), color)
+    }
+
+    /// 多行：在 `rect` 寬度內自動換行，由上往下排。
+    pub fn wrapped_primitive(
+        &mut self,
+        content: &str,
+        rect: Rect<Logical>,
+        size: f32,
+        color: Color,
+        scale: f32,
+    ) -> TextPrimitive {
+        let width = rect.size.width.get();
+        let layout = self
+            .layout(content, size, false, Some(width), scale)
+            .clone();
+        let origin = Point::new(rect.origin.x.get(), rect.origin.y.get() + layout.baseline);
+        self.primitive_from_layout(layout, origin, color)
     }
 
     /// 塑形並直接畫到 `painter`。
@@ -145,7 +276,27 @@ impl TextEngine {
         align: Align,
         scale: f32,
     ) {
+        if content.is_empty() {
+            return;
+        }
         let primitive = self.primitive(content, rect, size, bold, color, align, scale);
+        painter.text_primitive(primitive);
+    }
+
+    /// 自動換行並畫到 `painter`。
+    pub fn draw_wrapped(
+        &mut self,
+        painter: &mut Painter<'_>,
+        content: &str,
+        rect: Rect<Logical>,
+        size: f32,
+        color: Color,
+        scale: f32,
+    ) {
+        if content.is_empty() {
+            return;
+        }
+        let primitive = self.wrapped_primitive(content, rect, size, color, scale);
         painter.text_primitive(primitive);
     }
 }
@@ -175,9 +326,26 @@ mod tests {
             1.0,
         );
         // CI 機器可能沒有任何系統字型；有字型時一定要有字形。
-        if engine.fonts.diagnostics().system_faces > 0 {
+        if engine.has_fonts() {
             assert!(!p.glyphs.is_empty(), "no glyphs shaped");
         }
         assert!(engine.measure_width("按 Ctrl+Alt+L 說話", 14.0, false) >= 0.0);
+    }
+
+    #[test]
+    fn wrapping_grows_height_and_elide_shrinks_width() {
+        let mut engine = TextEngine::new();
+        if !engine.has_fonts() {
+            return;
+        }
+        let long = "這是一段很長的繁體中文辨識結果，用來確認自動換行會產生多行文字。".repeat(3);
+        let one = engine.measure_wrapped("短", 15.0, 300.0);
+        let many = engine.measure_wrapped(&long, 15.0, 120.0);
+        assert!(many > one * 2.0, "wrapped {many} vs single {one}");
+
+        let elided = engine.elide(&long, 13.0, false, 80.0);
+        assert!(elided.ends_with(ELLIPSIS));
+        assert!(engine.measure_width(&elided, 13.0, false) <= 80.0 + 0.5);
+        assert_eq!(engine.elide("短", 13.0, false, 80.0), "短");
     }
 }
