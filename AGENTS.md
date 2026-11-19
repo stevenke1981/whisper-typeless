@@ -91,12 +91,13 @@ cargo test --no-default-features --target x86_64-pc-windows-msvc --lib ui_snapsh
   - `tests.rs`：核心單元測試（假 Backend）。
 - `src/ui_acme/`：預設畫面層（AcmeUI-Native），只是核心的薄轉接層。
   - `app.rs`：`AcmeApp`（`acme_platform::Application`），擁有 `Controller`，把指標 / 鍵盤 / 輸入法事件轉成 `UiCommand`；`render_backend()` 回傳 `Cpu`（可由環境變數 `ACME_RENDER_BACKEND` 覆寫）。`app_tests.rs` 為對應測試。
-  - `views/`：`AppViewState` → 描述樹的純函式（`live.rs` 緊湊 / 即時、`file.rs` 檔案模式、`settings.rs` 設定、`overlay.rs` 錯誤紀錄浮層、`onboarding.rs` 缺模型 / 下載中狀態卡、`widgets.rs` 共用元件與 v0.6 tokens；`mod.rs` 另有 `Phase` / `phase` / `cloud_ready` / `needs_model`）。
+  - `views/`：`AppViewState` → 描述樹的純函式（`live.rs` 緊湊 / 即時、`file.rs` 檔案模式、`settings/` 設定（分頁框架與標題列在 `mod.rs`，每頁一檔：`general.rs` 一般、`engine.rs` 辨識、`models.rs` 模型、`output.rs` 輸出、`templates.rs` 模板、`advanced.rs` 進階；`tests.rs` 設定測試）、`overlay.rs` 錯誤紀錄浮層、`onboarding.rs` 缺模型 / 下載中狀態卡、`widgets.rs` 共用元件與 v0.6 tokens；`mod.rs` 另有 `Phase` / `phase` / `cloud_ready` / `needs_model`）。
   - `paint.rs`：描述樹 → `Painter` 指令與 `HitTestLayer` 命中區域（`HitMap`）。
   - `controls.rs`：滑桿 / 步進器數學、acme-textinput 文字框（含輸入法組字）。
   - `theme.rs`：色票（取自 `ui/styles/tokens.slint`）與 `Tone` / `Theme::tone`；`icons.rs`：單色向量圖示（`Icon`、`icon`）；`text.rs`：zh-TW 文字塑形、換行、省略號。
   - `local.rs`：只屬於畫面層的狀態（捲動、焦點、選取）；`msg.rs`：命中區域送出的 `Msg`。
   - `hwnd.rs`：Win32 縮放 / 置頂，一律 `SWP_NOACTIVATE`。
+  - `snapshots.rs`：`ui_snapshots` 無視窗快照測試（由 `app.rs` 載入，見上方「UI 快照」）。
 - `src/ui/`：Slint 備援轉接層（`--ui slint`，本版保留，下一版移除）。
   - `mod.rs`：`run` 與 `ui_update!` 巨集；`bridge/mod.rs`：callback 接線；`bridge/sync.rs`：設定與狀態同步；`bridge/window.rs`：視窗模式、置頂、拖曳。
   - `error_log.rs`：WARN/ERROR 環狀緩衝（200 筆）；`window_icon.rs`：工作列 / 標題列圖示（依錄音狀態切換）。

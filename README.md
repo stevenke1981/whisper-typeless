@@ -21,6 +21,9 @@ whisper-typeless 把你的語音即時轉成文字，並貼到你正在輸入的
 ### 介面
 
 - 預設介面為 **AcmeUI-Native**（Rust 原生 GUI）：小型浮動視窗，預設以 CPU 軟體渲染（小視窗不需要 GPU）。
+- 主畫面頂端的狀態卡顯示目前狀態（尚未下載模型、下載中、就緒、錄音中、辨識中），並標示開始／停止與按住說話的快捷鍵。
+- 設定分為「一般、辨識、模型、輸出、模板、進階」六頁，變更即自動儲存，不需按儲存。
+- 視窗快捷鍵：`Ctrl+,` 開啟設定，`Ctrl+1` / `Ctrl+2` 切換即時／檔案，設定開啟時 `Ctrl+1`–`Ctrl+6` 切換分頁。
 - 環境變數 `ACME_RENDER_BACKEND` 可覆寫渲染後端：`cpu`、`gpu`、`auto`（不分大小寫）。未設定或留空時使用預設的 `cpu`；設成無法辨識的值時會記錄警告並改用 `auto`。
 - 本版保留舊的 **Slint** 介面作為備援，以 `whisper-typeless.exe --ui slint` 啟動。Slint 介面將於下一版移除。
 
@@ -239,7 +242,7 @@ cargo build --release --no-default-features --target x86_64-pc-windows-msvc
 - **System tray**: closing the window hides it to the tray by default; left-click the tray icon to show/hide, right-click for record/settings/quit.
 - **Chinese-first**: Simplified output from Whisper is converted to Traditional Chinese (zh-TW) by default (OpenCC). zh-HK, zh-CN and raw modes are also available.
 - **Context templates**: built-in templates for meetings, casual talk, technical discussion, medical and legal use. Override or add templates with TOML files.
-- **Keyboard-first floating UI** built with AcmeUI-Native (Rust-native, CPU software rendering by default), optional always-on-top, light and dark themes. The previous Slint UI stays available as a fallback via `--ui slint` for this release.
+- **Keyboard-first UI** built with AcmeUI-Native (Rust-native, CPU software rendering by default): a status card shows the current state and hotkeys, settings are split into six tabs that save automatically, and `Ctrl+,` opens settings, `Ctrl+1` / `Ctrl+2` switch live / file, `Ctrl+1`–`Ctrl+6` switch settings tabs. Optional always-on-top, light and dark themes. The previous Slint UI stays available as a fallback via `--ui slint` for this release.
 - **Privacy mode** skips saving WAV files and clears the clipboard after output.
 - **Single small exe**; CUDA acceleration is optional and built from source.
 
