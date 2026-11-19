@@ -24,7 +24,8 @@ pub const VAD_DEFAULT_THRESHOLD: f32 = 0.6;
 pub const MAX_SEGMENT_SECONDS: u32 = 30;
 
 /// 最大段落樣本數 (30s @ 16kHz)
-pub const MAX_SEGMENT_SAMPLES: usize = (TARGET_SAMPLE_RATE as usize) * (MAX_SEGMENT_SECONDS as usize);
+pub const MAX_SEGMENT_SAMPLES: usize =
+    (TARGET_SAMPLE_RATE as usize) * (MAX_SEGMENT_SECONDS as usize);
 
 /// 波形顯示 bar 數量
 pub const WAVEFORM_BAR_COUNT: usize = 20;

@@ -1,0 +1,12 @@
+id = "meeting"
+name = "會議記錄"
+initial_prompt = "這是一段商業會議的記錄，包含專業術語、人名和公司名稱。請準確轉錄所有內容。"
+language_override = "zh"
+temperature_override = 0.0
+keywords = ["議程", "會議", "決議", "報告", "預算", "季度", "目標"]
+
+[postprocess]
+add_punctuation = true
+formal_style = true
+preserve_english_terms = false
+remove_fillers = ["嗯", "啊", "那個"]

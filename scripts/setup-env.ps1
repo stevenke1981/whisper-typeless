@@ -111,7 +111,7 @@ if ($NoCuda) {
         }
 
         # CMake also reads CMAKE_CUDA_ARCHITECTURES from environment in cmake >= 3.23
-        $env:CMAKE_CUDA_ARCHITECTURES = $env:CUDAARCHS
+        $env:CMAKE_CUDA_ARCHITECTURES = $env:CUDAARCHS   # 原 .cargo/config.toml 的機器專屬設定已移到此處
 
         # ── MSVC version compatibility ───────────────────────────────
         # CUDA 12.6 officially supports VS 2017–2022 only.

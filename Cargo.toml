@@ -1,6 +1,6 @@
 [package]
 name = "whisper-typeless"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Real-time speech-to-text with auto-inject, powered by whisper.cpp"
 license = "MIT"
@@ -37,6 +37,7 @@ ferrous-opencc = "0.4"
 
 # Crypto (model checksum)
 sha2 = "0.10"
+sha1 = "0.10"
 
 # Error handling
 thiserror = "1"
@@ -68,11 +69,11 @@ bytes = "1"
 slint-build = "1.7"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["winuser", "processthreadsapi", "wingdi", "handleapi", "fileapi", "processenv", "winbase"] }
+winapi = { version = "0.3", features = ["winuser", "processthreadsapi", "wingdi", "handleapi", "fileapi", "processenv", "winbase", "wincon"] }
 raw-window-handle = "0.6"
 
 [features]
-default = ["cuda"]
+default = []
 cuda    = ["whisper-rs/cuda"]
 metal   = ["whisper-rs/metal"]
 

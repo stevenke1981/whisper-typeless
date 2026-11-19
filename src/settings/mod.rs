@@ -1,9 +1,15 @@
 pub mod config;
+pub mod migration;
 pub mod persistence;
+#[cfg(test)]
+mod test_util;
 pub mod ui_settings;
 
 pub use config::AppConfig;
+pub use migration::{load_startup_config, StartupConfig};
 pub use module_registry::ModuleRegistry;
+pub use persistence::ConfigPersistence;
+pub use ui_settings::UiSettings;
 
 mod module_registry {
     use super::config::AppConfig;

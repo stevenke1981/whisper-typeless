@@ -1,0 +1,12 @@
+id = "technical"
+name = "技術討論"
+initial_prompt = "This is a technical discussion about software engineering, including programming terms, API names, and technical concepts. 程式碼、函式名稱、技術術語請保留英文原文。"
+language_override = "zh"
+temperature_override = 0.0
+keywords = ["程式", "函式", "API", "bug", "資料庫", "伺服器", "版本", "部署"]
+
+[postprocess]
+add_punctuation = true
+formal_style = false
+preserve_english_terms = true
+remove_fillers = ["嗯", "啊", "那個", "就是說"]

@@ -1,4 +1,5 @@
 mod bridge;
+pub mod error_log;
 pub mod window_icon;
 
 use std::sync::Arc;
