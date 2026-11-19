@@ -93,9 +93,9 @@ mod imp {
         AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu,
         DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, PostMessageW, PostQuitMessage,
         RegisterClassExW, RegisterWindowMessageW, SetForegroundWindow, SetMenuDefaultItem,
-        TrackPopupMenu, TranslateMessage, HWND_MESSAGE, MF_SEPARATOR, MF_STRING, MSG, TPM_NONOTIFY,
+        TrackPopupMenu, TranslateMessage, MF_SEPARATOR, MF_STRING, MSG, TPM_NONOTIFY,
         TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP,
-        WM_NULL, WM_RBUTTONUP, WNDCLASSEXW,
+        WM_NULL, WM_RBUTTONUP, WNDCLASSEXW, WS_EX_TOOLWINDOW,
     };
 
     use super::{action_for_menu_id, menu_labels, tooltip};
@@ -208,8 +208,10 @@ mod imp {
             wc.hInstance = hinst;
             wc.lpszClassName = class.as_ptr();
             RegisterClassExW(&wc); // 已註冊時回傳 0，視窗仍可建立
+                                   // 不用 HWND_MESSAGE：訊息專用視窗收不到廣播的 TaskbarCreated（Explorer 重啟後無法重新加入圖示）。
+                                   // 改用從不顯示的頂層工具視窗。
             let hwnd = CreateWindowExW(
-                0,
+                WS_EX_TOOLWINDOW,
                 class.as_ptr(),
                 class.as_ptr(),
                 0,
@@ -217,7 +219,7 @@ mod imp {
                 0,
                 0,
                 0,
-                HWND_MESSAGE,
+                std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 hinst,
                 std::ptr::null_mut(),

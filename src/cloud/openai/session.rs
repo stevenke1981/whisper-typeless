@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use super::protocol::{
     append_event, commit_event, parse_server_event, session_update, ReorderBuffer, ServerEvent,
-    SessionConfig, FRAME_SAMPLES, MIN_COMMIT_SAMPLES,
+    SessionConfig, Upsampler, FRAME_SAMPLES, MIN_COMMIT_SAMPLES,
 };
 use super::transport::Transport;
 
@@ -34,6 +34,7 @@ pub struct CloudSession {
     commits_acked: usize,
     reorder: ReorderBuffer,
     last_partial: String,
+    upsampler: Upsampler,
     /// 傳輸層失敗訊息；設定後不再送出任何東西。
     dead: Option<String>,
     /// 收到過伺服器的錯誤 / 語句失敗。
@@ -54,6 +55,7 @@ impl CloudSession {
             commits_acked: 0,
             reorder: ReorderBuffer::default(),
             last_partial: String::new(),
+            upsampler: Upsampler::default(),
             dead,
             had_error: false,
             delivered: false,
@@ -86,7 +88,8 @@ impl CloudSession {
 
     fn send_frame(&mut self, samples: &[f32]) {
         self.uncommitted += samples.len();
-        self.send(append_event(samples));
+        let wire = self.upsampler.process(samples);
+        self.send(append_event(&wire));
     }
 
     /// 加入 16 kHz 音訊；每滿 100 ms 送出一個封包。
@@ -382,7 +385,9 @@ mod tests {
                 })
             })
             .sum();
-        assert_eq!(total, MIN_COMMIT_SAMPLES);
+        // 送出的是 24 kHz：至少 100 ms（2400 樣本）
+        assert!(total >= 2400, "total = {total}");
+        assert!(total <= MIN_COMMIT_SAMPLES * 3 / 2 + 1);
     }
 
     #[test]

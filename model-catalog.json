@@ -21,6 +21,7 @@
       "speed_multiplier": 10.0,
       "quality_stars": 2,
       "is_english_only": true,
+      "recommended": false,
       "sha1": "c78c86eb1a8faa21b369bcd33207cc90d64ae9df",
       "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin",
       "mirror_urls": [
@@ -48,6 +49,7 @@
       "speed_multiplier": 7.0,
       "quality_stars": 3,
       "is_english_only": true,
+      "recommended": false,
       "sha1": "137c40403d78fd54d454da0f9bd998f78703390c",
       "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
       "mirror_urls": [
@@ -75,6 +77,7 @@
       "speed_multiplier": 4.0,
       "quality_stars": 4,
       "is_english_only": true,
+      "recommended": false,
       "sha1": "db8a495a91d927739e50b3fc1cc4c6b8f6c2d022",
       "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin",
       "mirror_urls": [
@@ -101,6 +104,7 @@
       "speed_multiplier": 2.0,
       "quality_stars": 5,
       "is_english_only": true,
+      "recommended": false,
       "sha1": "8c30f0e44ce9560643ebd10bbe50cd20eafd3723",
       "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin",
       "mirror_urls": [

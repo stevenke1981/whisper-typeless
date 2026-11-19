@@ -7,12 +7,15 @@ use serde_json::{json, Value};
 
 /// 轉錄專用的 Realtime 端點。
 pub const REALTIME_URL: &str = "wss://api.openai.com/v1/realtime?intent=transcription";
-/// 送出的音訊取樣率（與本機管線重採樣後一致）。
+/// 本機管線交給工作階段的音訊取樣率（重採樣後）。
 pub const SAMPLE_RATE: u32 = 16_000;
+/// 實際送給 OpenAI 的取樣率：`audio/pcm` 只接受 ≥ 24 kHz（實測 16 kHz 會被拒絕）。
+pub const WIRE_SAMPLE_RATE: u32 = 24_000;
 /// 每個 `input_audio_buffer.append` 封包的樣本數（100 ms）。
 pub const FRAME_SAMPLES: usize = 1_600;
 /// 伺服器接受 commit 的最短音訊長度（100 ms）；不足時補靜音。
-pub const MIN_COMMIT_SAMPLES: usize = 1_600;
+// 略多於 100 ms：升頻到 24 kHz 時串流插值可能少 1 個樣本，避免剛好低於伺服器下限。
+pub const MIN_COMMIT_SAMPLES: usize = 1_700;
 
 /// 一次轉錄工作階段的設定。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,9 +50,13 @@ impl SessionConfig {
     }
 }
 
-/// `session.update`：轉錄模式、PCM16 16 kHz、停用伺服器端 VAD（由本機 VAD 決定 commit）。
+/// `session.update`：轉錄模式、PCM16 24 kHz、停用伺服器端 VAD（由本機 VAD 決定 commit）。
 pub fn session_update(cfg: &SessionConfig) -> String {
-    let mut transcription = json!({ "model": cfg.model, "delay": "low" });
+    let mut transcription = json!({ "model": cfg.model });
+    // 只有 gpt-live-transcribe 支援 delay；gpt-transcribe 收到會回錯誤（實測）。
+    if cfg.model == "gpt-live-transcribe" {
+        transcription["delay"] = json!("low");
+    }
     if let Some(lang) = &cfg.language {
         transcription["languages"] = json!([lang]);
     }
@@ -62,7 +69,7 @@ pub fn session_update(cfg: &SessionConfig) -> String {
             "type": "transcription",
             "audio": {
                 "input": {
-                    "format": { "type": "audio/pcm", "rate": SAMPLE_RATE },
+                    "format": { "type": "audio/pcm", "rate": WIRE_SAMPLE_RATE },
                     "transcription": transcription,
                     "turn_detection": null
                 }
@@ -70,6 +77,43 @@ pub fn session_update(cfg: &SessionConfig) -> String {
         }
     })
     .to_string()
+}
+
+/// 16 kHz → 24 kHz 串流線性插值（3:2），跨封包保留狀態，避免封包邊界的不連續。
+#[derive(Debug, Default, Clone)]
+pub struct Upsampler {
+    prev: Option<f32>,
+    /// 下一個輸出點在本批輸入中的位置（-1 代表上一批的最後一個樣本）。
+    pos: f64,
+}
+
+impl Upsampler {
+    const STEP: f64 = SAMPLE_RATE as f64 / WIRE_SAMPLE_RATE as f64;
+
+    pub fn process(&mut self, input: &[f32]) -> Vec<f32> {
+        if input.is_empty() {
+            return Vec::new();
+        }
+        let prev = *self.prev.get_or_insert(input[0]);
+        let get = |i: isize| if i < 0 { prev } else { input[i as usize] };
+        let last = (input.len() - 1) as f64;
+        let mut out = Vec::with_capacity(input.len() * 3 / 2 + 2);
+        while self.pos <= last {
+            let i = self.pos.floor() as isize;
+            let frac = (self.pos - i as f64) as f32;
+            let a = get(i);
+            let b = if ((i + 1) as usize) < input.len() {
+                get(i + 1)
+            } else {
+                a
+            };
+            out.push(a + (b - a) * frac);
+            self.pos += Self::STEP;
+        }
+        self.pos -= input.len() as f64;
+        self.prev = input.last().copied();
+        out
+    }
 }
 
 /// f32（-1.0–1.0）→ PCM16 little-endian。
@@ -259,7 +303,7 @@ mod tests {
         assert_eq!(v["session"]["type"], "transcription");
         let input = &v["session"]["audio"]["input"];
         assert_eq!(input["format"]["type"], "audio/pcm");
-        assert_eq!(input["format"]["rate"], 16_000);
+        assert_eq!(input["format"]["rate"], 24_000);
         assert!(input["turn_detection"].is_null());
         assert!(input.as_object().unwrap().contains_key("turn_detection"));
         let tr = &input["transcription"];
@@ -431,5 +475,35 @@ mod tests {
         b.failed("3");
         assert_eq!(b.drain_all(), vec!["半", "完"]);
         assert_eq!(b.outstanding(), 0);
+    }
+
+    #[test]
+    fn delay_only_for_live_model() {
+        let v: Value = serde_json::from_str(&session_update(&SessionConfig::from_whisper(
+            "gpt-transcribe",
+            Some("zh-TW"),
+            None,
+        )))
+        .unwrap();
+        assert!(v["session"]["audio"]["input"]["transcription"]
+            .get("delay")
+            .is_none());
+    }
+
+    #[test]
+    fn upsampler_is_3_to_2_and_continuous_across_chunks() {
+        let ramp: Vec<f32> = (0..1600).map(|i| i as f32 / 1600.0).collect();
+        let mut whole = Upsampler::default();
+        let one = whole.process(&ramp);
+        let mut split = Upsampler::default();
+        let mut two = split.process(&ramp[..801]);
+        two.extend(split.process(&ramp[801..]));
+        assert!((2399..=2400).contains(&one.len()));
+        assert_eq!(one.len(), two.len());
+        for (a, b) in one.iter().zip(&two) {
+            assert!((a - b).abs() < 1e-5);
+        }
+        // 線性插值保持單調遞增
+        assert!(one.windows(2).all(|w| w[1] >= w[0]));
     }
 }

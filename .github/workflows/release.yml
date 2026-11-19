@@ -44,6 +44,13 @@ jobs:
           install_runtime: false
           cache: true
           stripdown: true
+      # whisper.cpp 的 vulkan-shaders-gen 巢狀路徑在 MSBuild 下會超過 MAX_PATH（本機實測），改用 Ninja + MSVC 環境
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: matrix.variant == 'vulkan'
+      - name: Use Ninja for CMake
+        if: matrix.variant == 'vulkan'
+        shell: pwsh
+        run: '"CMAKE_GENERATOR=Ninja" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
 
       - name: Resolve version and verify tag
         id: ver

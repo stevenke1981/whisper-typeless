@@ -48,9 +48,13 @@ struct ModelCatalogEntry {
     download_url: String,
     #[serde(default)]
     mirror_urls: Vec<String>,
+    /// 未標示時（例如舊版 catalog）依大小判斷，見 [`SMALL_MODEL_MAX_MB`]。
     #[serde(default)]
-    recommended: bool,
+    recommended: Option<bool>,
 }
+
+/// 未標示 `recommended` 的模型，磁碟大小不超過此值即視為建議的小型模型（Small 約 466 MB）。
+pub const SMALL_MODEL_MAX_MB: u64 = 500;
 
 impl ModelRegistry {
     pub fn all() -> Vec<ModelInfo> {
@@ -116,19 +120,24 @@ impl ModelRegistry {
         Ok(catalog
             .models
             .into_iter()
-            .map(|entry| ModelInfo {
-                id: entry.id,
-                display_name: entry.display_name,
-                size: entry.size,
-                speed_multiplier: entry.speed_multiplier,
-                quality_stars: entry.quality_stars,
-                is_english_only: entry.is_english_only,
-                sha256: entry.sha256,
-                download_url: entry.download_url,
-                mirror_urls: entry.mirror_urls,
-                local_path: None,
-                is_downloaded: false,
-                recommended: entry.recommended,
+            .map(|entry| {
+                let recommended = entry
+                    .recommended
+                    .unwrap_or(entry.size.disk_mb <= SMALL_MODEL_MAX_MB);
+                ModelInfo {
+                    id: entry.id,
+                    display_name: entry.display_name,
+                    size: entry.size,
+                    speed_multiplier: entry.speed_multiplier,
+                    quality_stars: entry.quality_stars,
+                    is_english_only: entry.is_english_only,
+                    sha256: entry.sha256,
+                    download_url: entry.download_url,
+                    mirror_urls: entry.mirror_urls,
+                    local_path: None,
+                    is_downloaded: false,
+                    recommended,
+                }
             })
             .collect())
     }
@@ -176,9 +185,14 @@ mod tests {
     }
 
     #[test]
-    fn recommended_defaults_false_and_embedded_marks_small_models() {
+    fn recommended_falls_back_to_size_and_embedded_marks_small_models() {
+        // 舊版 catalog 沒有 recommended：依大小判斷
         let models = ModelRegistry::parse_catalog(MINI_CATALOG).unwrap();
-        assert!(!models[0].recommended);
+        assert!(models[0].recommended);
+        let big = MINI_CATALOG.replace("\"disk_mb\":75", "\"disk_mb\":1500");
+        assert!(!ModelRegistry::parse_catalog(&big).unwrap()[0].recommended);
+        let explicit = MINI_CATALOG.replace("\"sha1\"", "\"recommended\":false,\"sha1\"");
+        assert!(!ModelRegistry::parse_catalog(&explicit).unwrap()[0].recommended);
         let all = ModelRegistry::parse_catalog(EMBEDDED_MODEL_CATALOG).unwrap();
         let mut rec: Vec<_> = all
             .iter()

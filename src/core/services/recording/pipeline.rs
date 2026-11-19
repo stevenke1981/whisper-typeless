@@ -216,6 +216,27 @@ fn finish_cloud(
     notifier.send(CoreEvent::DeviceLabel(label));
 }
 
+/// 暫時文字也做簡繁轉換（雲端回傳多為簡體）；每個錄音執行緒只建立一次轉換器。
+fn convert_partial(text: &str, req: &RecordingRequest) -> String {
+    use crate::transcription::pipeline::TranscriptionPipeline;
+    thread_local! {
+        static PIPE: std::cell::RefCell<Option<(bool, String, Option<TranscriptionPipeline>)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    PIPE.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        let stale = !matches!(&*cell, Some((on, mode, _)) if *on == req.opencc_enabled && *mode == req.conversion_mode);
+        if stale {
+            let pipe = TranscriptionPipeline::for_live(req.opencc_enabled, &req.conversion_mode).ok();
+            *cell = Some((req.opencc_enabled, req.conversion_mode.clone(), pipe));
+        }
+        match cell.as_ref().and_then(|(_, _, p)| p.as_ref()) {
+            Some(p) if req.opencc_enabled => p.process_text(text, None),
+            _ => text.to_string(),
+        }
+    })
+}
+
 /// 把工作階段結果送到畫面：暫時文字 → `Partial`；完成語句 → 與本機相同的後處理與輸出（逐句）。
 fn handle_cloud_outputs(
     outputs: Vec<SessionOutput>,
@@ -225,7 +246,9 @@ fn handle_cloud_outputs(
 ) {
     for output in outputs {
         match output {
-            SessionOutput::Partial(text) => notifier.send(CoreEvent::Partial(text)),
+            SessionOutput::Partial(text) => {
+                notifier.send(CoreEvent::Partial(convert_partial(&text, req)))
+            }
             SessionOutput::Final(text) => {
                 let status = if recording {
                     "● 錄音中...（OpenAI）"
