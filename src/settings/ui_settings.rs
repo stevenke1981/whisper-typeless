@@ -47,6 +47,17 @@ pub struct UiSettings {
 
     // Model
     pub selected_model_id: String,
+
+    // Transcription engine（[transcription]）
+    /// `"local"` / `"openai"`。
+    pub engine: String,
+    pub openai_model: String,
+    pub openai_consent: bool,
+
+    // Window / tray（[general]）
+    pub close_to_tray: bool,
+    pub minimize_to_tray: bool,
+    pub start_minimized: bool,
 }
 
 impl Default for UiSettings {
@@ -81,6 +92,12 @@ impl UiSettings {
             inject_enabled,
             privacy_mode: config.output.privacy_mode,
             selected_model_id: config.model.selected_id.clone(),
+            engine: config.transcription.engine.clone(),
+            openai_model: config.transcription.openai_model.clone(),
+            openai_consent: config.transcription.openai_consent,
+            close_to_tray: config.general.close_to_tray,
+            minimize_to_tray: config.general.minimize_to_tray,
+            start_minimized: config.general.start_minimized,
         }
     }
 
@@ -111,6 +128,12 @@ impl UiSettings {
         if !self.selected_model_id.is_empty() {
             config.model.selected_id = self.selected_model_id.clone();
         }
+        config.transcription.engine = self.engine.clone();
+        config.transcription.openai_model = self.openai_model.clone();
+        config.transcription.openai_consent = self.openai_consent;
+        config.general.close_to_tray = self.close_to_tray;
+        config.general.minimize_to_tray = self.minimize_to_tray;
+        config.general.start_minimized = self.start_minimized;
     }
 }
 
@@ -188,6 +211,12 @@ mod tests {
             inject_enabled: false,
             privacy_mode: true,
             selected_model_id: "large-v3-turbo".into(),
+            engine: "openai".into(),
+            openai_model: "custom-transcribe".into(),
+            openai_consent: true,
+            close_to_tray: false,
+            minimize_to_tray: true,
+            start_minimized: true,
         }
     }
 
@@ -315,5 +344,19 @@ mod tests {
         assert_eq!(s.vad_threshold, 0.5);
         assert_eq!(s.conversion_mode, "zh-CN");
         assert!(!s.privacy_mode);
+        assert_eq!(s.engine, "local");
+        assert!(!s.openai_consent);
+        assert!(s.close_to_tray);
+    }
+
+    #[test]
+    fn new_field_defaults_match_config() {
+        let ui = UiSettings::default();
+        assert_eq!(ui.engine, "local");
+        assert_eq!(ui.openai_model, "gpt-live-transcribe");
+        assert!(!ui.openai_consent);
+        assert!(ui.close_to_tray);
+        assert!(!ui.minimize_to_tray);
+        assert!(!ui.start_minimized);
     }
 }

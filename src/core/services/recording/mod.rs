@@ -1,4 +1,7 @@
 //! 即時錄音：音訊擷取 → 重採樣 / VAD / 波形 → 停止後整段轉錄並輸出。
+//!
+//! OpenAI 引擎（使用者已同意）：同一條管線把 16 kHz 音訊串流到 OpenAI Realtime，
+//! 本機 VAD 段落結束時 commit，逐句輸出；停止時有限等待剩餘語句。
 
 pub(crate) mod io;
 pub(crate) mod pipeline;
@@ -13,9 +16,11 @@ use tokio::runtime::Handle as TokioHandle;
 use tracing::info;
 
 use crate::audio::AudioCapture;
+use crate::cloud::openai::{CloudSession, SessionConfig, WsTransport};
 use crate::core::backend::RecordingRequest;
 use crate::core::Notifier;
 use crate::settings::config::AppConfig;
+use crate::settings::Secret;
 
 use super::ModelRuntime;
 
@@ -42,7 +47,8 @@ pub(crate) enum StartError {
     Failed(String),
 }
 
-/// 建立音訊擷取與處理管線。
+/// 建立音訊擷取與處理管線。`openai_key` 為 `Some` 時使用 OpenAI 引擎（不需要本機模型）。
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn start_recording(
     tokio: &TokioHandle,
     config: &AppConfig,
@@ -51,9 +57,14 @@ pub(crate) fn start_recording(
     req: RecordingRequest,
     runtime: ModelRuntime,
     notifier: Notifier,
+    openai_key: Option<Secret>,
 ) -> Result<RecordingHandle, StartError> {
-    info!("嘗試啟動錄音，模型: {}", model_id);
-    if !model_path.exists() {
+    if openai_key.is_some() {
+        info!("嘗試啟動錄音，引擎: OpenAI（{}）", req.openai_model);
+    } else {
+        info!("嘗試啟動錄音，模型: {}", model_id);
+    }
+    if openai_key.is_none() && !model_path.exists() {
         tracing::error!("模型 {model_id} 尚未下載，等待使用者確認下載");
         return Err(StartError::ModelMissing);
     }
@@ -91,6 +102,17 @@ pub(crate) fn start_recording(
         .start(audio_tok_tx, level_tok_tx)
         .map_err(|e| StartError::Failed(format!("無法啟動錄音串流: {e}")))?;
 
+    // 雲端工作階段：連線在背景建立，不阻塞畫面執行緒；音訊在連線完成前先排隊。
+    let cloud = openai_key.map(|key| {
+        let cfg = SessionConfig::from_whisper(
+            &req.openai_model,
+            req.whisper_params.language.as_deref(),
+            req.whisper_params.initial_prompt.as_deref(),
+        );
+        let transport = WsTransport::connect(tokio, &key);
+        CloudSession::start(Box::new(transport), &cfg)
+    });
+
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_flag_thread = Arc::clone(&stop_flag);
 
@@ -101,6 +123,7 @@ pub(crate) fn start_recording(
                 model_path,
                 sample_rate,
                 req,
+                cloud,
             },
             audio_std_rx,
             level_std_rx,

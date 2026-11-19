@@ -12,20 +12,52 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  release:
+  build:
+    name: build (${{ matrix.variant }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - variant: cpu
+            cargo_flags: --no-default-features
+          - variant: vulkan
+            cargo_flags: --features vulkan
+    outputs:
+      tag: ${{ steps.ver.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           # 快取需綁定 runner 映像版本：whisper-rs-sys 的 CMake 快取記錄 MSVC 絕對路徑，映像更新後會失效
-          key: img-${{ env.ImageVersion }}
+          key: img-${{ env.ImageVersion }}-${{ matrix.variant }}
+          # vulkan 版的 target 在 C:\t（見下方），只快取 registry
+          cache-targets: ${{ matrix.variant == 'cpu' }}
       - name: Set LIBCLANG_PATH
         shell: pwsh
         run: |
           $p = 'C:\Program Files\LLVM\bin'
           if (Test-Path $p) { "LIBCLANG_PATH=$p" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+      - name: Install Vulkan SDK
+        if: matrix.variant == 'vulkan'
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          install_runtime: false
+          cache: true
+          stripdown: true
+      # whisper.cpp 的 vulkan-shaders-gen 巢狀路徑在 MSBuild 下會超過 MAX_PATH（本機實測），改用 Ninja + MSVC 環境
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: matrix.variant == 'vulkan'
+      - name: Short target dir (vulkan)
+        if: matrix.variant == 'vulkan'
+        shell: pwsh
+        # whisper.cpp 的 vulkan-shaders-gen 巢狀 CMake 路徑會超過 250 字元上限
+        run: '"CARGO_TARGET_DIR=C:\t" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
+      - name: Use Ninja for CMake
+        if: matrix.variant == 'vulkan'
+        shell: pwsh
+        run: '"CMAKE_GENERATOR=Ninja" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
 
       - name: Resolve version and verify tag
         id: ver
@@ -45,15 +77,17 @@ jobs:
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: cargo test
+        if: matrix.variant == 'cpu'
         run: cargo test --no-default-features
       - name: cargo build --release
-        run: cargo build --release --no-default-features
+        run: cargo build --release ${{ matrix.cargo_flags }}
 
       - name: Smoke test (--self-check)
         shell: pwsh
         run: |
           # release 版為 windows 子系統：PowerShell 不會等待 GUI 程式，須用 Start-Process -Wait 取得結束碼
-          $p = Start-Process -FilePath target/release/whisper-typeless.exe -ArgumentList '--self-check' -Wait -PassThru -NoNewWindow
+          $tdir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
+          $p = Start-Process -FilePath "$tdir/release/whisper-typeless.exe" -ArgumentList '--self-check' -Wait -PassThru -NoNewWindow
           Write-Host "self-check exit code: $($p.ExitCode)"
           if ($p.ExitCode -ne 0) { exit $p.ExitCode }
 
@@ -62,35 +96,48 @@ jobs:
         shell: pwsh
         run: |
           $tag = '${{ steps.ver.outputs.tag }}'
-          $name = "whisper-typeless-$tag-windows-x86_64-cpu"
+          $name = "whisper-typeless-$tag-windows-x86_64-${{ matrix.variant }}"
           $stage = Join-Path $PWD "dist/$name"
           New-Item -ItemType Directory -Force $stage | Out-Null
-          Copy-Item target/release/whisper-typeless.exe $stage
+          $tdir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
+          Copy-Item "$tdir/release/whisper-typeless.exe" $stage
           foreach ($f in 'model-catalog.json','MODEL_CATALOG.md','README.md','LICENSE','CHANGELOG.md') {
             if (Test-Path $f) { Copy-Item $f $stage }
           }
           if (Test-Path templates) { Copy-Item templates (Join-Path $stage 'templates') -Recurse }
           $zip = Join-Path $PWD "dist/$name.zip"
           Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
-          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          # LF 結尾，讓 Linux/macOS 的 `sha256sum -c` 也能直接驗證
-          [IO.File]::WriteAllText((Join-Path $PWD 'dist/SHA256SUMS.txt'), "$hash  $name.zip`n")
           "zip=dist/$name.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      - name: Upload artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: whisper-typeless-windows-cpu
-          path: |
-            ${{ steps.pkg.outputs.zip }}
-            dist/SHA256SUMS.txt
+          name: whisper-typeless-windows-${{ matrix.variant }}
+          path: ${{ steps.pkg.outputs.zip }}
           retention-days: 14
 
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: whisper-typeless-windows-*
+          merge-multiple: true
+      - name: Aggregate SHA256SUMS (LF)
+        shell: bash
+        run: |
+          cd dist
+          # LF 結尾，讓 `sha256sum -c` 可直接驗證
+          sha256sum *.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          tag="${{ steps.ver.outputs.tag }}"
-          gh release create "$tag" "${{ steps.pkg.outputs.zip }}" dist/SHA256SUMS.txt --generate-notes --verify-tag --title "whisper-typeless $tag"
+          tag="${{ needs.build.outputs.tag }}"
+          gh release create "$tag" dist/*.zip dist/SHA256SUMS.txt --generate-notes --verify-tag --title "whisper-typeless $tag"

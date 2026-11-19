@@ -2,6 +2,30 @@
 
 本檔案格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 [語意化版本](https://semver.org/lang/zh-TW/)。
 
+## [0.5.0] - 2026-11-19
+
+### Added
+
+- OpenAI 即時轉錄（Realtime API，`gpt-live-transcribe` / `gpt-transcribe`）：設定中選「OpenAI 雲端」引擎並勾選同意後，錄音即時串流到 OpenAI，逐句輸出並顯示即時文字；結果同樣經 OpenCC 轉為繁體。隱私模式開啟時一律使用本機。
+- 在 App 內設定 OpenAI API 金鑰：以 Windows DPAPI 加密保存於使用者設定目錄（不寫入 `config.toml`、日誌）；未設定時改讀環境變數 `OPENAI_API_KEY`。
+- 雲端轉錄失敗且尚未輸出時，若有本機模型則自動改用本機轉錄。
+- 系統匣圖示：左鍵顯示／隱藏主視窗，右鍵選單（顯示主視窗、開始／停止錄音、設定、結束）；錄音中圖示變紅；Explorer 重啟後自動重新加入。
+- 設定「系統匣」區段：關閉視窗時縮小到系統匣（預設開啟）、最小化時縮小到系統匣、啟動時縮小到系統匣。
+- Vulkan GPU 加速（Cargo feature `vulkan`）：Release 同時提供 `-cpu` 與 `-vulkan` 兩種 zip，`SHA256SUMS.txt` 彙整兩者。
+- Vulkan 版延遲載入 `vulkan-1.dll` 並於使用前探測；GPU 初始化失敗時自動改用 CPU（裝置標籤「CPU（GPU 初始化失敗）」）。
+- `--self-check` 回報 GPU 後端與執行環境狀態。
+- 設定新增「GPU 與模型」區段：使用 GPU 開關（下次載入模型生效）與小型模型建議。
+- CI 新增 Vulkan 工作；`scripts/dev.ps1` 新增 `-Vulkan` 並檢查 `VULKAN_SDK`。
+
+### Changed
+
+- 模型清單以 `recommended` 標記 tiny / base / small，並置頂顯示（由小到大）。
+- 選用的模型遺失時，自動改用已下載的最小模型，不再跳出下載提示。
+- Medium 以上的模型下載前一律先確認大小。
+- 裝置標籤改為「GPU (Vulkan)」「CPU（此版本未含 GPU）」，取代 CUDA 專用字樣。
+- 舊版 `model-catalog.json` 未標示 `recommended` 時，依大小判斷（500 MB 以下視為小型模型）。
+- 隱私規則更新：除模型下載外，唯一允許的對外連線是使用者明確選用並同意的 OpenAI 雲端轉錄。
+
 ## [0.4.0] - 2026-11-19
 
 ### Added

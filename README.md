@@ -41,7 +41,7 @@ whisper-typeless 把你的語音即時轉成文字，並貼到你正在輸入的
 3. 若啟動時出現缺少 `VCRUNTIME140.dll` 或 `MSVCP140.dll` 的錯誤，請安裝 [Microsoft Visual C++ Redistributable（x64）](https://aka.ms/vs/17/release/vc_redist.x64.exe)。
 4. 執行 `whisper-typeless.exe`。
 
-系統需求：Windows 10/11（64 位元）、一個麥克風。Release zip 只含 CPU 版本（不需要 CUDA 執行時）；需要 NVIDIA CUDA 加速時，請從原始碼建置（見下方）。
+系統需求：Windows 10/11（64 位元）、一個麥克風。Release 提供兩種 zip：`-cpu`（不需要任何 GPU 執行時）與 `-vulkan`（Vulkan GPU 加速，支援 NVIDIA / AMD / Intel 顯示卡，需要顯示卡驅動內建的 Vulkan 執行環境）。建議優先使用 Tiny / Base / Small 小型模型。需要 NVIDIA CUDA 加速時，請從原始碼建置（見下方）。
 
 ### 首次啟動與模型下載
 
@@ -85,7 +85,22 @@ privacy_mode = true
 - 不會把錄音儲存為 WAV 檔案。
 - 輸出完成後清除剪貼簿內容。
 
-辨識文字仍會顯示在視窗中，可使用清除按鈕清空。本程式不會上傳語音或文字；唯一的網路連線是模型下載。
+辨識文字仍會顯示在視窗中，可使用清除按鈕清空。隱私模式開啟時一律使用本機轉錄，不會使用 OpenAI 雲端轉錄。
+
+### OpenAI 即時轉錄（選用）
+
+預設只用本機 whisper，語音不離開電腦。若想改用 OpenAI 的即時轉錄（Realtime API）：
+
+1. 開啟設定的「雲端轉錄」區段，引擎選「OpenAI 雲端」。
+2. 勾選同意：錄音期間麥克風音訊會即時傳送到 OpenAI。
+3. 輸入 API 金鑰後按「儲存」。金鑰以 Windows DPAPI 加密存在 `%APPDATA%\whisper-typeless\openai.key`，不會寫入 `config.toml` 或日誌；也可改用環境變數 `OPENAI_API_KEY`。
+4. 模型可選 `gpt-live-transcribe`（預設，邊說邊出字）或 `gpt-transcribe`。
+
+錄音時會即時顯示文字，每段話結束（靜音偵測）就輸出一句，並同樣轉為繁體中文。雲端轉錄失敗而且還沒有輸出時，若已下載本機模型，會自動改用本機轉錄。使用 OpenAI 會依其價格計費。
+
+### 系統匣
+
+程式會在系統匣顯示圖示（錄音中變紅）。左鍵點一下顯示／隱藏主視窗；右鍵選單有「顯示主視窗」「開始／停止錄音」「設定」「結束」。預設按下關閉鈕會縮小到系統匣而不是結束，要結束請用右鍵選單的「結束」。可在設定的「系統匣」區段調整：關閉時縮小、最小化時縮小、啟動時縮小到系統匣。
 
 ### 情境模板
 
@@ -184,6 +199,7 @@ remove_fillers = ["嗯", "啊", "那個"]
 .\scripts\dev.ps1 lint       # clippy（-D warnings）與 fmt 檢查
 .\scripts\dev.ps1 build      # CPU 版 release 建置
 .\scripts\dev.ps1 build -Cuda  # 加入 CUDA 支援（需要 CUDA Toolkit）
+.\scripts\dev.ps1 build -Vulkan # 加入 Vulkan 支援（需要 Vulkan SDK，並設定 VULKAN_SDK）
 ```
 
 AcmeUI-Native 相依套件以固定 git rev 引用 `github.com/stevenke1981/AcmeUI-Native`，首次建置需要能連到 GitHub。
@@ -219,7 +235,8 @@ cargo build --release --no-default-features --target x86_64-pc-windows-msvc
 
 **whisper-typeless** is a Windows desktop speech-to-text tool. Hold a hotkey, speak, and the transcript is typed into whichever window has focus. Recognition runs fully offline with whisper.cpp.
 
-- **Local-only**: audio and text never leave your machine. The only network access is model download.
+- **Local-first**: by default audio and text never leave your machine; the only network access is model download. Optional OpenAI realtime transcription (`gpt-live-transcribe` / `gpt-transcribe`) can be enabled in Settings with explicit consent; the API key is stored encrypted with Windows DPAPI (or read from `OPENAI_API_KEY`). Privacy mode always forces local transcription.
+- **System tray**: closing the window hides it to the tray by default; left-click the tray icon to show/hide, right-click for record/settings/quit.
 - **Chinese-first**: Simplified output from Whisper is converted to Traditional Chinese (zh-TW) by default (OpenCC). zh-HK, zh-CN and raw modes are also available.
 - **Context templates**: built-in templates for meetings, casual talk, technical discussion, medical and legal use. Override or add templates with TOML files.
 - **Keyboard-first floating UI** built with AcmeUI-Native (Rust-native, CPU software rendering by default), optional always-on-top, light and dark themes. The previous Slint UI stays available as a fallback via `--ui slint` for this release.
@@ -234,6 +251,6 @@ cargo build --release --no-default-features --target x86_64-pc-windows-msvc
 
 **Config:** `%APPDATA%\whisper-typeless\config.toml` (run `whisper-typeless.exe --config-path` to confirm). CLI flags: `--version`, `--help`, `--config-path`, `--self-check`, `--ui acme|slint` (default `acme`). The AcmeUI renderer defaults to CPU; override with `ACME_RENDER_BACKEND=cpu|gpu|auto`.
 
-**Build from source:** Rust (MSVC toolchain), Visual Studio Build Tools, CMake and libclang (set `LIBCLANG_PATH`). Run `.\scripts\dev.ps1 build` for CPU, or `.\scripts\dev.ps1 build -Cuda` with the CUDA Toolkit. AcmeUI-Native dependencies are fetched from GitHub at a pinned revision, so the first build needs network access. See the Chinese section for raw cargo commands.
+**Build from source:** Rust (MSVC toolchain), Visual Studio Build Tools, CMake and libclang (set `LIBCLANG_PATH`). Run `.\scripts\dev.ps1 build` for CPU, `.\scripts\dev.ps1 build -Vulkan` with the Vulkan SDK (`VULKAN_SDK` set, `glslc` required), or `.\scripts\dev.ps1 build -Cuda` with the CUDA Toolkit. Releases ship `-cpu` and `-vulkan` zips; the Vulkan build delay-loads `vulkan-1.dll` and falls back to CPU if GPU initialisation fails (toggle in Settings, takes effect on next model load). AcmeUI-Native dependencies are fetched from GitHub at a pinned revision, so the first build needs network access. See the Chinese section for raw cargo commands.
 
 **License:** MIT. See [LICENSE](LICENSE).

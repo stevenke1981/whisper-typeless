@@ -69,43 +69,56 @@ fn transcribe_and_output(
 
     match engine.transcribe(&segment, &req.whisper_params) {
         Ok(result) => {
-            let text =
-                match TranscriptionPipeline::for_live(req.opencc_enabled, &req.conversion_mode) {
-                    Ok(pipeline) => pipeline.process_text(&result.text, None),
-                    Err(e) => {
-                        error!("OpenCC 轉換初始化失敗: {e}");
-                        result.text.trim().to_string()
-                    }
-                };
-            info!("轉錄結果: {:?}（{} 字）", text, text.chars().count());
-
-            if text.is_empty() {
+            let status = transcribed_status(wav_path.as_ref());
+            if !postprocess_and_output(&result.text, req, notifier, status) {
                 notifier.send(CoreEvent::TranscriptEmpty);
-                return;
             }
-
-            // 剪貼簿 / 鍵入 / 隱私清除皆由 OutputRouter 處理；
-            // 即時路徑沿用 enigo.text 直接鍵入、無額外延遲。失敗時 router 會記 warn。
-            let mut router = OutputRouter::new(
-                OutputMode::from_flags(req.clipboard_enabled, req.inject_enabled),
-                OutputFormatter::passthrough(),
-            )
-            .with_inject_method(InjectMethod::Type)
-            .with_inject_delay_ms(0)
-            .with_privacy_mode(req.privacy_mode);
-            let _ = router.send(&text);
-
-            notifier.send(CoreEvent::TranscriptSegment {
-                text,
-                timestamp: current_time_str(),
-                status: transcribed_status(wav_path.as_ref()),
-            });
         }
         Err(e) => {
             error!("轉錄失敗: {e}");
             notifier.send(CoreEvent::TranscriptionFailed(format!("轉錄錯誤: {e}")));
         }
     }
+}
+
+/// 本機與雲端共用的尾段：OpenCC 後處理 → 剪貼簿 / 鍵入（OutputRouter）→ 轉錄段落事件。
+/// 後處理後沒有文字時不輸出並回傳 `false`。轉錄內容不寫入日誌。
+pub(super) fn postprocess_and_output(
+    raw: &str,
+    req: &RecordingRequest,
+    notifier: &Notifier,
+    status: String,
+) -> bool {
+    let text = match TranscriptionPipeline::for_live(req.opencc_enabled, &req.conversion_mode) {
+        Ok(pipeline) => pipeline.process_text(raw, None),
+        Err(e) => {
+            error!("OpenCC 轉換初始化失敗: {e}");
+            raw.trim().to_string()
+        }
+    };
+    info!("轉錄完成（{} 字）", text.chars().count());
+
+    if text.is_empty() {
+        return false;
+    }
+
+    // 剪貼簿 / 鍵入 / 隱私清除皆由 OutputRouter 處理；
+    // 即時路徑沿用 enigo.text 直接鍵入、無額外延遲。失敗時 router 會記 warn。
+    let mut router = OutputRouter::new(
+        OutputMode::from_flags(req.clipboard_enabled, req.inject_enabled),
+        OutputFormatter::passthrough(),
+    )
+    .with_inject_method(InjectMethod::Type)
+    .with_inject_delay_ms(0)
+    .with_privacy_mode(req.privacy_mode);
+    let _ = router.send(&text);
+
+    notifier.send(CoreEvent::TranscriptSegment {
+        text,
+        timestamp: current_time_str(),
+        status,
+    });
+    true
 }
 
 /// 轉錄完成後的狀態列文字（隱私模式不保留錄音檔時不提路徑）。

@@ -278,6 +278,17 @@ pub fn check_opencc() -> Result<String, String> {
     }
 }
 
+/// GPU 後端與執行環境（僅回報，不影響結束碼）。
+pub fn check_gpu() -> Result<String, String> {
+    Ok(match crate::whisper::gpu_backend_name() {
+        None => "此版本未含 GPU 後端（CPU 版）".to_string(),
+        Some(name) if crate::whisper::gpu_runtime_available() => {
+            format!("{name} 後端可用")
+        }
+        Some(name) => format!("{name} 後端已編入，但找不到執行環境，將使用 CPU"),
+    })
+}
+
 pub fn run_self_check() -> SelfCheckReport {
     let effective = ModelRegistry::all();
     let effective_result = if effective.is_empty() {
@@ -294,6 +305,7 @@ pub fn run_self_check() -> SelfCheckReport {
             CheckItem::new("預設設定", check_default_config()),
             CheckItem::new("設定檔", check_config_file()),
             CheckItem::new("OpenCC", check_opencc()),
+            CheckItem::new("GPU", check_gpu()),
         ],
     }
 }

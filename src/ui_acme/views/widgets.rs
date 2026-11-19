@@ -323,6 +323,23 @@ pub fn text_field(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>, id: Field
         st.scroll_offset = 0.0;
     }
     let text_x = content_x - st.scroll_offset;
+    // 遮蔽欄位（`password`，例如 API 金鑰）：一律畫遮蔽字元，位移換算到遮蔽後的字串。
+    let masked = st.password;
+    let mask_char = st.password_char;
+    let shown = |s: &str| {
+        if masked {
+            mask_text(s, mask_char)
+        } else {
+            s.to_string()
+        }
+    };
+    let map = |s: &str, b: usize| {
+        if masked {
+            masked_offset(s, b, mask_char)
+        } else {
+            b
+        }
+    };
     v.push_clip(r(content_x - 1.0, y(rect), content_w + 2.0, h(rect)));
     if st.text.is_empty() && st.preedit.is_empty() {
         v.text(
@@ -333,12 +350,20 @@ pub fn text_field(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>, id: Field
             Align::Start,
         );
     }
-    let cursor = st.cursor().min(st.text.len());
-    let display = format!("{}{}{}", &st.text[..cursor], st.preedit, &st.text[cursor..]);
+    let raw_cursor = st.cursor().min(st.text.len());
+    let text_shown = shown(&st.text);
+    let preedit_shown = shown(&st.preedit);
+    let cursor = map(&st.text, raw_cursor);
+    let display = format!(
+        "{}{}{}",
+        &text_shown[..cursor],
+        preedit_shown,
+        &text_shown[cursor..]
+    );
     let fonts = cx.text.fonts_mut();
     if let Some((a, b)) = st.selection() {
-        let xa = byte_offset_to_x(&st.text, a, fonts, &style, scale);
-        let xb = byte_offset_to_x(&st.text, b, fonts, &style, scale);
+        let xa = byte_offset_to_x(&text_shown, map(&st.text, a), fonts, &style, scale);
+        let xb = byte_offset_to_x(&text_shown, map(&st.text, b), fonts, &style, scale);
         v.rect(
             r(text_x + xa, y(rect) + 5.0, xb - xa, h(rect) - 10.0),
             2.0,
@@ -361,7 +386,7 @@ pub fn text_field(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>, id: Field
     }
     if !st.preedit.is_empty() {
         let p0 = byte_offset_to_x(&display, cursor, fonts, &style, scale);
-        let p1 = byte_offset_to_x(&display, cursor + st.preedit.len(), fonts, &style, scale);
+        let p1 = byte_offset_to_x(&display, cursor + preedit_shown.len(), fonts, &style, scale);
         v.rect(
             r(
                 text_x + p0,
@@ -375,8 +400,8 @@ pub fn text_field(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>, id: Field
     }
     if focused {
         let in_preedit = match st.preedit_cursor {
-            Some((start, _)) if start <= st.preedit.len() => start,
-            _ => st.preedit.len(),
+            Some((start, _)) if start <= st.preedit.len() => map(&st.preedit, start),
+            _ => preedit_shown.len(),
         };
         let caret = byte_offset_to_x(&display, cursor + in_preedit, fonts, &style, scale);
         let caret_rect = r(text_x + caret, y(rect) + 6.0, 1.5, h(rect) - 12.0);
@@ -404,6 +429,20 @@ pub fn text_field(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>, id: Field
         None,
         2,
     );
+}
+
+/// 遮蔽顯示：每個字元換成 `mask`。
+pub fn mask_text(s: &str, mask: char) -> String {
+    std::iter::repeat_n(mask, s.chars().count()).collect()
+}
+
+/// 原字串的位元組位移 → 遮蔽字串中的位元組位移。
+pub fn masked_offset(s: &str, byte: usize, mask: char) -> usize {
+    let mut b = byte.min(s.len());
+    while !s.is_char_boundary(b) {
+        b -= 1;
+    }
+    s[..b].chars().count() * mask.len_utf8()
 }
 
 /// 波形條（置中，`bars` 為 0–1 音量）。

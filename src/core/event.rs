@@ -6,6 +6,19 @@
 
 use super::state::{ModelEntryView, TemplateEntryView};
 
+/// 系統匣選單 / 圖示操作（WP-B）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrayAction {
+    /// 左鍵點圖示：顯示 ↔ 隱藏視窗。
+    ToggleWindow,
+    /// 開始 / 停止錄音。
+    ToggleRecording,
+    /// 開啟設定面板。
+    OpenSettings,
+    /// 結束程式。
+    Quit,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CoreEvent {
     // ── 一般 ──
@@ -94,4 +107,12 @@ pub enum CoreEvent {
         entries: Vec<TemplateEntryView>,
         status: Option<String>,
     },
+
+    // ── 系統匣（WP-B）──
+    /// 系統匣選單或圖示被操作。
+    Tray(TrayAction),
+
+    // ── 雲端轉錄（WP-A）──
+    /// 是否有可用的 OpenAI 金鑰（只傳有無，不傳內容）。
+    OpenAiKeyState(bool),
 }

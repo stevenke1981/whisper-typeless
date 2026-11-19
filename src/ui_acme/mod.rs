@@ -9,7 +9,7 @@
 //! - [`controls`]：滑桿 / 步進器數學、acme-textinput 文字框（含輸入法組字）。
 //! - [`theme`]：取自 `ui/styles/tokens.slint` 的淺色 / 深色色票。
 //! - [`text`]：zh-TW 文字塑形、換行、省略號。
-//! - [`hwnd`]：Win32 縮放 / 置頂（一律 `SWP_NOACTIVATE`，不搶焦點）。
+//! - [`hwnd`]：Win32 縮放 / 置頂（一律 `SWP_NOACTIVATE`，不搶焦點）、隱藏 / 顯示（系統匣）。
 
 pub mod app;
 pub mod controls;
@@ -45,6 +45,7 @@ pub async fn run(state: Arc<RwLock<AppState>>) -> anyhow::Result<()> {
 
     let slot: WakerSlot = Arc::new(Mutex::new(None));
     let (notifier, queue) = event_channel(app::wake_fn(&slot));
+    let tray = crate::tray::TrayHandle::spawn(notifier.clone());
     let mut backend = RealBackend::new(
         config.clone(),
         config_store,
@@ -55,6 +56,6 @@ pub async fn run(state: Arc<RwLock<AppState>>) -> anyhow::Result<()> {
     let mut controller = Controller::new(view, config, Box::new(backend));
     controller.start();
 
-    let app = AcmeApp::new(controller, queue, slot);
+    let app = AcmeApp::new(controller, queue, slot).with_tray(tray);
     acme_platform::run(app).map_err(|e| anyhow::anyhow!("AcmeUI 執行失敗: {e}"))
 }

@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 use super::*;
 use crate::app::RecordingState;
 use crate::audio::WAVEFORM_BAR_COUNT;
-use crate::settings::config::AppConfig;
+use crate::settings::config::{AppConfig, TranscriptionEngine};
+use crate::settings::secret::Secret;
 use crate::settings::ui_settings::UiSettings;
 use crate::whisper::WhisperParams;
 
@@ -28,6 +29,7 @@ enum Call {
     SaveTemplate(String, String, String),
     DeleteTemplate(String),
     ClearErrorLog,
+    StoreApiKey(Option<Secret>),
 }
 
 #[derive(Default)]
@@ -38,6 +40,8 @@ struct Shared {
     save_error: Option<String>,
     preload_ok: bool,
     error_log: Vec<String>,
+    api_key: Option<Secret>,
+    api_key_error: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -115,6 +119,18 @@ impl Backend for FakeBackend {
     }
     fn error_log_snapshot(&self) -> Vec<String> {
         self.0.lock().unwrap().error_log.clone()
+    }
+    fn store_api_key(&mut self, key: Option<Secret>) -> Result<(), String> {
+        self.push(Call::StoreApiKey(key.clone()));
+        let mut s = self.0.lock().unwrap();
+        if let Some(e) = s.api_key_error.clone() {
+            return Err(e);
+        }
+        s.api_key = key;
+        Ok(())
+    }
+    fn has_api_key(&self) -> bool {
+        self.0.lock().unwrap().api_key.is_some()
     }
 }
 
@@ -671,4 +687,135 @@ fn keys_feed_controller() {
         .expect("space");
     c.handle(cmd);
     assert!(c.state().is_recording);
+}
+
+#[test]
+fn recording_request_engine_requires_consent() {
+    let (mut c, fake) = controller();
+    c.state_mut().engine = "openai".into();
+    c.handle(UiCommand::ToggleRecording);
+    c.handle(UiCommand::ToggleRecording);
+    c.state_mut().openai_consent = true;
+    c.handle(UiCommand::ToggleRecording);
+    let engines: Vec<_> = fake
+        .calls()
+        .into_iter()
+        .filter_map(|call| match call {
+            Call::StartRecording(req) => Some((req.engine, req.openai_model)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        engines,
+        vec![
+            (
+                TranscriptionEngine::Local,
+                "gpt-live-transcribe".to_string()
+            ),
+            (
+                TranscriptionEngine::OpenAi,
+                "gpt-live-transcribe".to_string()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn api_key_commands_update_key_state() {
+    let (mut c, fake) = controller();
+    c.handle(UiCommand::SetOpenAiKey(Secret::new("sk-x")));
+    assert!(c.state().openai_key_set);
+    c.handle(UiCommand::ClearOpenAiKey);
+    assert!(!c.state().openai_key_set);
+    let calls = fake.calls();
+    assert!(matches!(&calls[0], Call::StoreApiKey(Some(k)) if k.expose() == "sk-x"));
+    assert!(matches!(&calls[1], Call::StoreApiKey(None)));
+    fake.0.lock().unwrap().api_key_error = Some("壞了".into());
+    c.handle(UiCommand::SetOpenAiKey(Secret::new("sk-y")));
+    assert!(!c.state().openai_key_set);
+    assert!(c.state().status_text.contains("壞了"));
+    c.apply(CoreEvent::OpenAiKeyState(true));
+    assert!(c.state().openai_key_set);
+}
+
+#[test]
+fn window_and_tray_contract() {
+    let (mut c, _fake) = controller();
+    assert_eq!(
+        c.handle(UiCommand::ShowWindow),
+        vec![ViewRequest::ShowWindow]
+    );
+    c.apply(CoreEvent::Tray(TrayAction::ToggleWindow));
+    assert!(c.state().window_hidden);
+    c.apply(CoreEvent::Tray(TrayAction::OpenSettings));
+    assert!(!c.state().window_hidden && c.state().settings_open);
+    c.apply(CoreEvent::Tray(TrayAction::ToggleRecording));
+    assert!(c.state().is_recording);
+    c.apply(CoreEvent::Tray(TrayAction::Quit));
+    assert!(c.state().quit_requested);
+    assert_eq!(c.handle(UiCommand::Quit), vec![ViewRequest::Quit]);
+}
+
+#[test]
+fn privacy_mode_refuses_cloud_engine() {
+    let (mut c, fake) = controller();
+    c.state_mut().engine = "openai".into();
+    c.state_mut().openai_consent = true;
+    c.state_mut().privacy_mode = true;
+    c.handle(UiCommand::ToggleRecording);
+    c.handle(UiCommand::ToggleRecording);
+    c.state_mut().privacy_mode = false;
+    c.handle(UiCommand::ToggleRecording);
+    let engines: Vec<_> = fake
+        .calls()
+        .into_iter()
+        .filter_map(|call| match call {
+            Call::StartRecording(req) => Some(req.engine),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        engines,
+        vec![TranscriptionEngine::Local, TranscriptionEngine::OpenAi]
+    );
+}
+
+#[test]
+fn close_goes_to_tray_or_quits_by_setting() {
+    let (mut c, _fake) = controller();
+    c.state_mut().close_to_tray = true;
+    assert_eq!(
+        c.handle(UiCommand::RequestClose),
+        vec![ViewRequest::HideWindow]
+    );
+    assert!(c.state().window_hidden && !c.state().quit_requested);
+
+    c.handle(UiCommand::ShowWindow);
+    assert!(!c.state().window_hidden);
+
+    c.state_mut().close_to_tray = false;
+    assert_eq!(c.handle(UiCommand::RequestClose), vec![ViewRequest::Quit]);
+    assert!(c.state().quit_requested && !c.state().window_hidden);
+}
+
+#[test]
+fn hotkey_and_ptt_never_show_or_hide_window() {
+    let (mut c, _fake) = controller();
+    c.apply(CoreEvent::Tray(TrayAction::ToggleWindow));
+    assert!(c.state().window_hidden);
+    c.apply(CoreEvent::HotkeyPressed);
+    c.apply(CoreEvent::HotkeyPressed);
+    assert!(c.state().window_hidden, "熱鍵不得叫出視窗");
+    c.apply(CoreEvent::Tray(TrayAction::ToggleWindow));
+    assert!(!c.state().window_hidden);
+}
+
+#[test]
+fn tray_toggle_recording_keeps_window_state() {
+    let (mut c, _fake) = controller();
+    c.apply(CoreEvent::Tray(TrayAction::ToggleWindow));
+    c.apply(CoreEvent::Tray(TrayAction::ToggleRecording));
+    assert!(c.state().is_recording && c.state().window_hidden);
+    c.apply(CoreEvent::Tray(TrayAction::ToggleRecording));
+    assert!(!c.state().is_recording);
 }

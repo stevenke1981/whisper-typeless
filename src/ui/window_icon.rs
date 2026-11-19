@@ -228,6 +228,12 @@ mod inner {
 
     // ── Public entry point ────────────────────────────────────────────────────────
 
+    /// Create a fresh HICON (caller owns it and must DestroyIcon). Returns 0 on failure.
+    pub fn create_hicon(recording: bool) -> isize {
+        // SAFETY: plain GDI calls; the pixel buffer outlives the call.
+        unsafe { pixels_to_hicon(&make_pixels(recording)) as isize }
+    }
+
     /// Update the window icon to reflect the current recording state.
     /// Safe to call from any thread.
     pub fn update(recording: bool) {
@@ -262,6 +268,18 @@ mod inner {
 }
 
 // ── Platform-neutral façade ───────────────────────────────────────────────────
+
+/// Create an icon handle for the system tray (caller owns it). 0 when unavailable.
+pub fn create_hicon(recording: bool) -> isize {
+    #[cfg(windows)]
+    return inner::create_hicon(recording);
+
+    #[cfg(not(windows))]
+    {
+        let _ = recording;
+        0
+    }
+}
 
 /// Update the taskbar / title-bar icon to reflect recording state.
 /// Does nothing on non-Windows platforms.

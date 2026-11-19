@@ -8,7 +8,8 @@ use super::widgets::{
     toggle_row, FONT_LG, FONT_SM, FONT_XS, RADIUS_SM,
 };
 use super::Ctx;
-use crate::core::UiCommand;
+use crate::core::{AppViewState, UiCommand};
+use crate::settings::UiSettings;
 use crate::ui_acme::controls::step_value;
 use crate::ui_acme::msg::{FieldId, ModKey, Msg, ScrollId, SettingEdit, SliderKind};
 use crate::ui_acme::paint::{r, View};
@@ -84,6 +85,244 @@ pub fn panel(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
     scrollbar(v, cx, body, offset, max, content_h);
 }
 
+// 以下三個區段由後續工作包各自填入；目前不畫任何東西，回傳佔用的高度 0。
+// 簽名一致：(描述樹, 情境, 左緣 x, 起始 y, 內容寬) → 區段高度。
+
+/// 轉錄引擎選項（`[transcription] engine`）。
+pub const ENGINES: [(&str, &str); 2] = [("local", "本機"), ("openai", "OpenAI 雲端")];
+/// OpenAI 轉錄模型。
+pub const OPENAI_MODELS: [(&str, &str); 2] = [
+    ("gpt-live-transcribe", "gpt-live-transcribe"),
+    ("gpt-transcribe", "gpt-transcribe"),
+];
+
+/// 自動換行的說明文字，回傳佔用高度（含下方間距）。
+fn note(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y: f32, cw: f32, text: &str, danger: bool) -> f32 {
+    let h = cx.text.measure_wrapped(text, FONT_XS, cw);
+    let color = if danger { cx.t.danger } else { cx.t.text2 };
+    v.wrapped(r(x0, y, cw, h), text, FONT_XS, color);
+    h + 8.0
+}
+
+/// 雲端轉錄：引擎選擇、OpenAI 模型、同意說明、金鑰輸入（WP-A）。
+fn cloud_section(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32) -> f32 {
+    let t = cx.t;
+    let s = cx.s;
+    let mut y = y0;
+    y += section_header(v, t, x0, y, cw, "雲端轉錄");
+    if s.privacy_mode {
+        y += note(
+            v,
+            cx,
+            x0,
+            y,
+            cw,
+            "隱私模式啟用中：雲端轉錄已停用，一律使用本機引擎。",
+            false,
+        );
+        return y - y0;
+    }
+
+    row_label(v, t, x0, y, cw, 36.0, "轉錄引擎");
+    y += 36.0;
+    let seg_w = ((cw - 4.0) / 2.0).min(120.0);
+    segmented(v, t, x0, y, seg_w, 28.0, &ENGINES, &s.engine, true, |id| {
+        edit(SettingEdit::Engine(id.to_string()))
+    });
+    y += 40.0;
+    if s.engine != "openai" {
+        return y - y0;
+    }
+
+    y += toggle_row(
+        v,
+        t,
+        x0,
+        y,
+        cw,
+        "同意將語音傳送到 OpenAI",
+        s.openai_consent,
+        edit(SettingEdit::OpenAiConsent(!s.openai_consent)),
+    );
+    let warning = if s.openai_consent {
+        "⚠ 錄音會即時傳送到 OpenAI 伺服器轉錄（需要網路，費用由你的 API 帳號支付）。檔案模式仍使用本機模型。"
+    } else {
+        "⚠ 勾選同意後，錄音才會傳送到 OpenAI 伺服器轉錄；未同意時一律使用本機引擎。"
+    };
+    y += note(v, cx, x0, y, cw, warning, !s.openai_consent);
+
+    // 金鑰：只顯示「已設定 / 未設定」，永不顯示內容
+    row_label(v, t, x0, y, cw - 80.0, 36.0, "API 金鑰");
+    let (label, color) = if s.openai_key_set {
+        ("✓ 已設定", t.success)
+    } else {
+        ("未設定", t.text2)
+    };
+    v.text(
+        r(x0 + cw - 80.0, y, 80.0, 36.0),
+        label,
+        FONT_XS,
+        color,
+        Align::End,
+    );
+    y += 36.0;
+    let btn_w = 56.0;
+    let field_w = (cw - 2.0 * btn_w - 12.0).max(60.0);
+    text_field(v, cx, r(x0, y, field_w, 30.0), FieldId::OpenAiKey);
+    text_button(
+        v,
+        t,
+        r(x0 + field_w + 6.0, y, btn_w, 30.0),
+        "儲存",
+        FONT_XS,
+        t.on_accent,
+        t.accent,
+        None,
+        Some(Msg::OpenAiKeySave),
+    );
+    text_button(
+        v,
+        t,
+        r(x0 + field_w + 12.0 + btn_w, y, btn_w, 30.0),
+        "清除",
+        FONT_XS,
+        t.text2,
+        t.bg3,
+        Some(t.border),
+        s.openai_key_set
+            .then_some(Msg::Core(UiCommand::ClearOpenAiKey)),
+    );
+    y += 38.0;
+    y += note(
+        v,
+        cx,
+        x0,
+        y,
+        cw,
+        "金鑰以 Windows DPAPI 加密存在本機設定資料夾，不寫入設定檔；也可改用環境變數 OPENAI_API_KEY。",
+        false,
+    );
+
+    row_label(v, t, x0, y, cw, 36.0, "OpenAI 模型");
+    y += 36.0;
+    let seg_w = ((cw - 4.0) / 2.0).min(150.0);
+    segmented(
+        v,
+        t,
+        x0,
+        y,
+        seg_w,
+        28.0,
+        &OPENAI_MODELS,
+        &s.openai_model,
+        true,
+        |id| edit(SettingEdit::OpenAiModel(id.to_string())),
+    );
+    y += 40.0;
+    y - y0
+}
+
+/// 系統匣：關閉 / 最小化到系統匣、啟動時最小化（WP-B）。
+fn tray_section(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y: f32, cw: f32) -> f32 {
+    let t = cx.t;
+    let s = cx.s;
+    let start = y;
+    let mut y = y;
+    y += section_header(v, t, x0, y, cw, "系統匣");
+    for (label, on, edit) in tray_toggles(s) {
+        y += toggle_row(v, t, x0, y, cw, label, on, edit);
+    }
+    y - start
+}
+
+/// 系統匣三個開關：（文字、目前值、按下後送出的指令）。純函式，供測試。
+fn tray_toggles(s: &AppViewState) -> [(&'static str, bool, UiCommand); 3] {
+    let flip = |f: fn(&mut UiSettings)| {
+        let mut snap = s.ui_settings();
+        f(&mut snap);
+        UiCommand::UpdateSettings(Box::new(snap))
+    };
+    [
+        (
+            "關閉視窗時縮小到系統匣",
+            s.close_to_tray,
+            flip(|u| u.close_to_tray = !u.close_to_tray),
+        ),
+        (
+            "最小化時縮小到系統匣",
+            s.minimize_to_tray,
+            flip(|u| u.minimize_to_tray = !u.minimize_to_tray),
+        ),
+        (
+            "啟動時縮小到系統匣",
+            s.start_minimized,
+            flip(|u| u.start_minimized = !u.start_minimized),
+        ),
+    ]
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)] // 緊鄰 tray_toggles，避免與其他工作包在檔尾衝突
+mod tray_toggle_tests {
+    use super::*;
+
+    #[test]
+    fn tray_toggles_flip_only_their_own_flag() {
+        let s = AppViewState::default();
+        let toggles = tray_toggles(&s);
+        let base = s.ui_settings();
+        let snaps: Vec<UiSettings> = toggles
+            .iter()
+            .map(|(_, _, c)| match c {
+                UiCommand::UpdateSettings(u) => (**u).clone(),
+                other => panic!("非設定指令: {other:?}"),
+            })
+            .collect();
+        assert_eq!(toggles[0].1, base.close_to_tray);
+        assert_eq!(snaps[0].close_to_tray, !base.close_to_tray);
+        assert_eq!(snaps[1].minimize_to_tray, !base.minimize_to_tray);
+        assert_eq!(snaps[2].start_minimized, !base.start_minimized);
+        assert_eq!(snaps[0].minimize_to_tray, base.minimize_to_tray);
+        assert!(toggles.iter().all(|(label, _, _)| label.contains("系統匣")));
+    }
+}
+
+/// GPU 後端 / 模型建議（WP-C）。
+fn gpu_model_section(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y: f32, cw: f32) -> f32 {
+    let t = cx.t;
+    let s = cx.s;
+    let backend = crate::whisper::gpu_backend_name();
+    let mut h = section_header(v, t, x0, y, cw, "GPU 與模型");
+    let label = match backend {
+        Some(name) => format!("使用 GPU（{name}）"),
+        None => "使用 GPU".to_string(),
+    };
+    h += toggle_row(
+        v,
+        t,
+        x0,
+        y + h,
+        cw,
+        &label,
+        s.use_gpu,
+        edit(SettingEdit::UseGpu(!s.use_gpu)),
+    );
+    let note = match backend {
+        Some(_) => "變更會在下次載入模型時生效。若當機，請關閉此選項改用 CPU。",
+        None => "此版本未含 GPU 支援，仍以 CPU 辨識；需要 GPU 請使用 Vulkan 版。",
+    };
+    v.text(r(x0, y + h, cw, 32.0), note, FONT_XS, t.text2, Align::Start);
+    h += 32.0;
+    v.text(
+        r(x0, y + h, cw, 32.0),
+        "建議使用 Tiny / Base / Small 小型模型；較大的模型下載前會再次確認。",
+        FONT_XS,
+        t.text2,
+        Align::Start,
+    );
+    h + 32.0
+}
+
 fn edit(e: SettingEdit) -> Msg {
     Msg::Setting(e)
 }
@@ -141,16 +380,6 @@ fn content(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32) -> f32 {
 
     // ── Whisper 引擎 ──
     y += section_header(v, t, x0, y, cw, "Whisper 引擎");
-    y += toggle_row(
-        v,
-        t,
-        x0,
-        y,
-        cw,
-        "使用 GPU",
-        s.use_gpu,
-        edit(SettingEdit::UseGpu(!s.use_gpu)),
-    );
     row_label(v, t, x0, y, cw - ctrl_w - 50.0, 48.0, "溫度");
     v.text(
         r(ctrl_x - 48.0, y, 44.0, 48.0),
@@ -222,6 +451,9 @@ fn content(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32) -> f32 {
     );
     y += 40.0;
 
+    // ── 雲端轉錄（WP-A）──
+    y += cloud_section(v, cx, x0, y, cw);
+
     // ── 隱私 ──
     y += section_header(v, t, x0, y, cw, "隱私");
     y += toggle_row(
@@ -251,6 +483,9 @@ fn content(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32) -> f32 {
         s.dark_mode,
         UiCommand::SetDarkMode(!s.dark_mode),
     );
+
+    // ── 系統匣（WP-B）──
+    y += tray_section(v, cx, x0, y, cw);
 
     // ── 功能模組 ──
     y += section_header(v, t, x0, y, cw, "功能模組");
@@ -387,6 +622,9 @@ fn content(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32) -> f32 {
         y += 36.0;
     }
 
+    // ── GPU / 模型（WP-C）──
+    y += gpu_model_section(v, cx, x0, y, cw);
+
     // ── 模型 ──
     y += 8.0;
     y += section_header(v, t, x0, y, cw, "模型");
@@ -480,4 +718,125 @@ fn content(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32) -> f32 {
     );
     y += 30.0 + 16.0;
     y
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::AppViewState;
+    use crate::ui_acme::controls::set_text;
+    use crate::ui_acme::local::UiLocal;
+    use crate::ui_acme::paint::{Action, Item};
+    use crate::ui_acme::text::TextEngine;
+    use crate::ui_acme::theme::Theme;
+
+    fn cloud(s: &AppViewState, ui: &UiLocal) -> (View, f32) {
+        let mut text = TextEngine::new();
+        let mut cx = Ctx {
+            s,
+            ui,
+            t: Theme::for_mode(true),
+            text: &mut text,
+            scale: 1.0,
+        };
+        let mut v = View::new();
+        let h = cloud_section(&mut v, &mut cx, 20.0, 0.0, 400.0);
+        (v, h)
+    }
+
+    fn texts(v: &View) -> Vec<String> {
+        v.items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Text { content, .. } | Item::Wrapped { content, .. } => Some(content.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn actions(v: &View) -> Vec<Action> {
+        v.items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Hit { action, .. } => Some(action.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn openai_state() -> AppViewState {
+        AppViewState {
+            engine: "openai".into(),
+            ..AppViewState::default()
+        }
+    }
+
+    #[test]
+    fn privacy_mode_disables_cloud_controls() {
+        let s = AppViewState {
+            privacy_mode: true,
+            ..openai_state()
+        };
+        let (v, h) = cloud(&s, &UiLocal::default());
+        assert!(h > 0.0);
+        assert!(actions(&v).is_empty());
+        assert!(texts(&v).iter().any(|t| t.contains("隱私模式")));
+    }
+
+    #[test]
+    fn local_engine_shows_only_engine_choice() {
+        let (v, _) = cloud(&AppViewState::default(), &UiLocal::default());
+        let acts = actions(&v);
+        assert!(
+            acts.contains(&Action::Click(Msg::Setting(SettingEdit::Engine(
+                "openai".into()
+            ))))
+        );
+        assert!(!acts.iter().any(|a| matches!(
+            a,
+            Action::Field {
+                id: FieldId::OpenAiKey,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn openai_engine_shows_consent_key_and_model() {
+        let mut ui = UiLocal::default();
+        set_text(&mut ui.fields.openai_key, "sk-secret-xyz");
+        let (v, _) = cloud(&openai_state(), &ui);
+        let acts = actions(&v);
+        assert!(
+            acts.contains(&Action::Click(Msg::Setting(SettingEdit::OpenAiConsent(
+                true
+            ))))
+        );
+        assert!(acts.contains(&Action::Click(Msg::OpenAiKeySave)));
+        assert!(
+            acts.contains(&Action::Click(Msg::Setting(SettingEdit::OpenAiModel(
+                "gpt-transcribe".into()
+            ))))
+        );
+        // 未設定金鑰時「清除」停用
+        assert!(!acts.contains(&Action::Click(Msg::Core(UiCommand::ClearOpenAiKey))));
+        let all = texts(&v);
+        assert!(all.iter().any(|t| t == "未設定"));
+        assert!(all.iter().any(|t| t.contains("OpenAI 伺服器")));
+        // 金鑰欄位只畫遮蔽字元
+        assert!(!all.iter().any(|t| t.contains("sk-secret")));
+        assert!(all.iter().any(|t| t == &"•".repeat("sk-secret-xyz".len())));
+    }
+
+    #[test]
+    fn key_set_enables_clear() {
+        let s = AppViewState {
+            openai_key_set: true,
+            openai_consent: true,
+            ..openai_state()
+        };
+        let (v, _) = cloud(&s, &UiLocal::default());
+        assert!(actions(&v).contains(&Action::Click(Msg::Core(UiCommand::ClearOpenAiKey))));
+        assert!(texts(&v).iter().any(|t| t == "✓ 已設定"));
+    }
 }

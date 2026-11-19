@@ -8,10 +8,11 @@ use tracing::{error, info};
 
 use super::backend::{Backend, FileTranscriptionRequest, RecordingRequest, RecordingStart};
 use super::command::{UiCommand, ViewRequest};
-use super::event::CoreEvent;
+use super::event::{CoreEvent, TrayAction};
 use super::state::{AppViewState, TranscriptSegment};
 use crate::audio::WAVEFORM_BAR_COUNT;
-use crate::settings::config::AppConfig;
+use crate::settings::config::{AppConfig, TranscriptionEngine};
+use crate::settings::secret::Secret;
 use crate::whisper::WhisperParams;
 
 // ─── Notifier ────────────────────────────────────────────────────────────────
@@ -172,7 +173,15 @@ impl Controller {
                 s.floating_expanded = on;
                 return vec![ViewRequest::ApplyWindowGeometry];
             }
-            UiCommand::RequestClose => return vec![ViewRequest::HideWindow],
+            // 關閉鈕：縮到系統匣（畫面層沒有系統匣時改為關閉視窗），或直接結束。
+            UiCommand::RequestClose => {
+                if s.close_to_tray {
+                    s.window_hidden = true;
+                    return vec![ViewRequest::HideWindow];
+                }
+                s.quit_requested = true;
+                return vec![ViewRequest::Quit];
+            }
             UiCommand::StartDrag => return vec![ViewRequest::StartDrag],
             UiCommand::ClearErrorLog => {
                 self.backend.clear_error_log();
@@ -221,6 +230,20 @@ impl Controller {
             UiCommand::SetInjectEnabled(on) => s.inject_enabled = on,
             UiCommand::SetFileOutputFormat(fmt) => s.file_output_format = fmt,
             UiCommand::UpdateSettings(settings) => s.apply_ui_settings(&settings),
+
+            // WP-A：金鑰加密存入設定資料夾（DPAPI）；結果反映在 openai_key_set / 狀態列。
+            UiCommand::SetOpenAiKey(key) => self.store_api_key(Some(key)),
+            UiCommand::ClearOpenAiKey => self.store_api_key(None),
+
+            // WP-B：系統匣叫回 / 結束。
+            UiCommand::ShowWindow => {
+                s.window_hidden = false;
+                return vec![ViewRequest::ShowWindow];
+            }
+            UiCommand::Quit => {
+                s.quit_requested = true;
+                return vec![ViewRequest::Quit];
+            }
         }
         Vec::new()
     }
@@ -360,6 +383,31 @@ impl Controller {
                     s.status_text = status;
                 }
             }
+
+            // WP-B：先只改狀態旗標，畫面層依旗標顯示 / 隱藏 / 結束。
+            CoreEvent::Tray(action) => match action {
+                TrayAction::ToggleWindow => s.window_hidden = !s.window_hidden,
+                TrayAction::ToggleRecording => self.toggle_recording(),
+                TrayAction::OpenSettings => {
+                    s.window_hidden = false;
+                    s.settings_open = true;
+                }
+                TrayAction::Quit => s.quit_requested = true,
+            },
+
+            // WP-A
+            CoreEvent::OpenAiKeyState(set) => s.openai_key_set = set,
+        }
+    }
+
+    /// 儲存 / 刪除 OpenAI 金鑰並更新 `openai_key_set`（WP-A）。
+    fn store_api_key(&mut self, key: Option<Secret>) {
+        match self.backend.store_api_key(key) {
+            Ok(()) => self.state.openai_key_set = self.backend.has_api_key(),
+            Err(e) => {
+                error!("OpenAI 金鑰儲存失敗: {e}");
+                self.state.status_text = format!("金鑰儲存失敗：{e}");
+            }
         }
     }
 
@@ -387,6 +435,13 @@ impl Controller {
             opencc_enabled: self.state.mod_opencc,
             conversion_mode: self.state.conversion_mode.clone(),
             whisper_params: self.whisper_params(),
+            // 隱私：未經同意或開啟隱私模式時一律本機轉錄
+            engine: if self.state.openai_consent && !self.state.privacy_mode {
+                TranscriptionEngine::from_str_lossy(&self.state.engine)
+            } else {
+                TranscriptionEngine::Local
+            },
+            openai_model: self.state.openai_model.clone(),
         };
         match self.backend.start_recording(req) {
             RecordingStart::Started => {

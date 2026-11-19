@@ -200,6 +200,13 @@ fn perform(ui: &AppWindow, request: ViewRequest) {
             let _ = ui.window().hide();
         }
         ViewRequest::StartDrag => window::start_drag(ui),
+        // WP-B（Slint 備援只做最基本的處理）
+        ViewRequest::ShowWindow => {
+            let _ = ui.window().show();
+        }
+        ViewRequest::Quit => {
+            let _ = slint::quit_event_loop();
+        }
     }
 }
 

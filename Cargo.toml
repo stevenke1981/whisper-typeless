@@ -1,6 +1,6 @@
 [package]
 name = "whisper-typeless"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "Real-time speech-to-text with auto-inject, powered by whisper.cpp"
 license = "MIT"
@@ -28,6 +28,10 @@ tokio = { version = "1", features = ["full"] }
 
 # HTTP download
 reqwest = { version = "0.12", features = ["stream", "json", "rustls-tls"], default-features = false }
+
+# Cloud transcription (OpenAI Realtime, opt-in with explicit consent)
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+base64 = "0.22"
 
 # Serialization + config
 serde = { version = "1", features = ["derive"] }
@@ -78,12 +82,13 @@ acme-render-cpu = { git = "https://github.com/stevenke1981/AcmeUI-Native", rev =
 slint-build = "1.7"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["winuser", "processthreadsapi", "wingdi", "handleapi", "fileapi", "processenv", "winbase", "wincon"] }
+winapi = { version = "0.3", features = ["winuser", "processthreadsapi", "wingdi", "handleapi", "fileapi", "processenv", "winbase", "wincon", "dpapi", "wincrypt", "shellapi", "libloaderapi"] }
 raw-window-handle = "0.6"
 
 [features]
 default = []
 cuda    = ["whisper-rs/cuda"]
+vulkan  = ["whisper-rs/vulkan"]
 metal   = ["whisper-rs/metal"]
 
 [profile.release]

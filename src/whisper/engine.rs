@@ -1,9 +1,69 @@
 use std::path::Path;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 use super::{DecodingStrategy, TranscriptResult, TranscriptSegment, WhisperParams};
 use crate::audio::AudioSegment;
+
+/// 此版本編進了哪個 GPU 後端（沒有則為 `None`）。
+pub fn gpu_backend_name() -> Option<&'static str> {
+    if cfg!(feature = "cuda") {
+        Some("CUDA")
+    } else if cfg!(feature = "vulkan") {
+        Some("Vulkan")
+    } else if cfg!(feature = "metal") {
+        Some("Metal")
+    } else {
+        None
+    }
+}
+
+/// GPU 執行環境是否可用。Vulkan 版以 LoadLibrary 探測 vulkan-1.dll
+/// （該 DLL 為延遲載入，缺少時不探測就呼叫會直接當掉）；其他後端視為可用。
+pub fn gpu_runtime_available() -> bool {
+    #[cfg(all(feature = "vulkan", windows))]
+    {
+        use std::sync::OnceLock;
+        static PROBE: OnceLock<bool> = OnceLock::new();
+        *PROBE.get_or_init(probe_vulkan_dll)
+    }
+    #[cfg(not(all(feature = "vulkan", windows)))]
+    {
+        gpu_backend_name().is_some()
+    }
+}
+
+#[cfg(all(feature = "vulkan", windows))]
+fn probe_vulkan_dll() -> bool {
+    use std::ffi::c_void;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn LoadLibraryW(name: *const u16) -> *mut c_void;
+        fn FreeLibrary(module: *mut c_void) -> i32;
+    }
+    let name: Vec<u16> = "vulkan-1.dll\0".encode_utf16().collect();
+    // SAFETY: name 以 NUL 結尾；成功時立即釋放，只是確認 DLL 可載入。
+    unsafe {
+        let h = LoadLibraryW(name.as_ptr());
+        if h.is_null() {
+            false
+        } else {
+            FreeLibrary(h);
+            true
+        }
+    }
+}
+
+/// 推論裝置標籤。`gpu_active` 表示實際以 GPU 載入成功。
+fn device_label_for(use_gpu: bool, gpu_active: bool, gpu_failed: bool) -> String {
+    match (gpu_backend_name(), use_gpu) {
+        (_, false) => "CPU".to_string(),
+        (Some(name), true) if gpu_active => format!("GPU ({name})"),
+        (Some(_), true) if gpu_failed => "CPU（GPU 初始化失敗）".to_string(),
+        (Some(name), true) => format!("GPU ({name})"),
+        (None, true) => "CPU（此版本未含 GPU）".to_string(),
+    }
+}
 
 pub struct WhisperEngine {
     ctx: WhisperContext,
@@ -14,27 +74,38 @@ impl WhisperEngine {
     pub fn load(model_path: &Path, params: &WhisperParams) -> anyhow::Result<Self> {
         info!("載入 Whisper 模型: {}", model_path.display());
 
-        let mut ctx_params = WhisperContextParameters::default();
-        ctx_params.use_gpu(params.use_gpu);
-        ctx_params.gpu_device(params.gpu_device);
+        let path = model_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("無效路徑"))?;
+        let compiled = gpu_backend_name().is_some();
+        let want_gpu = params.use_gpu && compiled;
 
-        let ctx = WhisperContext::new_with_params(
-            model_path
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("無效路徑"))?,
-            ctx_params,
-        )
-        .map_err(|e| anyhow::anyhow!("模型載入失敗: {e:?}"))?;
-
-        let device_label = if cfg!(feature = "cuda") && params.use_gpu {
-            "GPU (CUDA)".to_string()
-        } else if cfg!(feature = "metal") && params.use_gpu {
-            "GPU (Metal)".to_string()
-        } else if params.use_gpu {
-            "CPU (需要 cuda 特性)".to_string()
-        } else {
-            "CPU".to_string()
+        let load = |use_gpu: bool| {
+            let mut ctx_params = WhisperContextParameters::default();
+            ctx_params.use_gpu(use_gpu);
+            ctx_params.gpu_device(params.gpu_device);
+            WhisperContext::new_with_params(path, ctx_params)
         };
+
+        let mut gpu_failed = false;
+        let ctx = if want_gpu && gpu_runtime_available() {
+            match load(true) {
+                Ok(ctx) => ctx,
+                Err(e) => {
+                    warn!("GPU 初始化失敗，改用 CPU: {e:?}");
+                    gpu_failed = true;
+                    load(false).map_err(|e| anyhow::anyhow!("模型載入失敗: {e:?}"))?
+                }
+            }
+        } else if want_gpu {
+            warn!("找不到 GPU 執行環境（vulkan-1.dll），改用 CPU");
+            gpu_failed = true;
+            load(false).map_err(|e| anyhow::anyhow!("模型載入失敗: {e:?}"))?
+        } else {
+            load(false).map_err(|e| anyhow::anyhow!("模型載入失敗: {e:?}"))?
+        };
+
+        let device_label = device_label_for(params.use_gpu, want_gpu && !gpu_failed, gpu_failed);
 
         info!("模型載入成功，推論裝置: {device_label}");
         Ok(Self { ctx, device_label })
@@ -143,5 +214,31 @@ impl WhisperEngine {
             language,
             segments: result_segments,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn label_cpu_when_gpu_disabled() {
+        assert_eq!(device_label_for(false, false, false), "CPU");
+    }
+
+    #[test]
+    fn label_reflects_build_features() {
+        let l = device_label_for(true, true, false);
+        match gpu_backend_name() {
+            Some(name) => assert_eq!(l, format!("GPU ({name})")),
+            None => assert_eq!(l, "CPU（此版本未含 GPU）"),
+        }
+    }
+
+    #[test]
+    fn label_reports_gpu_failure_when_compiled() {
+        if gpu_backend_name().is_some() {
+            assert_eq!(device_label_for(true, false, true), "CPU（GPU 初始化失敗）");
+        }
     }
 }
