@@ -6,7 +6,8 @@
 use acme_core::{Logical, Rect};
 
 use super::widgets::{
-    btn, card as tone_card, progress, Btn, FONT_SM, FONT_XL, FONT_XS, RADIUS_LG, SP3, SP4,
+    btn, card as tone_card, progress, Btn, CTRL_SM, FONT_LG, FONT_SM, FONT_XL, FONT_XS, RADIUS_LG,
+    SP2, SP3, SP4,
 };
 use super::{phase, Ctx, Phase};
 use crate::core::UiCommand;
@@ -15,7 +16,12 @@ use crate::ui_acme::paint::{r, View};
 use crate::ui_acme::text::Align;
 use crate::ui_acme::theme::Tone;
 
-/// 缺模型 / 下載中的狀態卡（填滿 `rect`，圓角 14）。
+/// 缺模型卡的標題。
+const TITLE_NEEDS_MODEL: &str = "還差一步：下載語音模型";
+/// 比這個寬度窄（例如 380 寬的浮動面板）時改用上下排列的窄版。
+const NARROW_W: f32 = 440.0;
+
+/// 缺模型 / 下載中的狀態卡（填滿 `rect`，圓角 14）。寬度小於 440 時改用窄版排列。
 pub fn card(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
     let s = cx.s;
     let t = cx.t;
@@ -24,15 +30,6 @@ pub fn card(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
     match phase(s) {
         Phase::NeedsModel => {
             tone_card(v, t, rect, RADIUS_LG, Tone::Warning);
-            let btn_w = 104.0;
-            let text_w = (w0 - 2.0 * SP4 - btn_w - SP3).max(80.0);
-            v.bold_text(
-                r(x0 + SP4, y0 + 12.0, text_w, 28.0),
-                "還差一步：下載語音模型",
-                FONT_XL,
-                t.text,
-                Align::Start,
-            );
             let model = s.model_entries.iter().find(|m| m.id == s.selected_model_id);
             let body = match model {
                 Some(m) => format!(
@@ -41,6 +38,58 @@ pub fn card(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
                 ),
                 None => "下載語音模型後即可開始，只需一次；語音只在本機處理。".to_string(),
             };
+            let download = Some(Msg::Core(UiCommand::ModelSelectOrDownload(
+                s.selected_model_id.clone(),
+            )));
+            let others = Some(Msg::OpenSettings(SettingsTab::Models));
+            let btn_w = 104.0;
+            if w0 < NARROW_W {
+                // 窄版（浮動面板）：標題、單行說明、按鈕排成一列。
+                let tw = w0 - 2.0 * SP4;
+                v.bold_text(
+                    r(x0 + SP4, y0 + 8.0, tw, 24.0),
+                    TITLE_NEEDS_MODEL,
+                    FONT_LG,
+                    t.text,
+                    Align::Start,
+                );
+                let line = cx.text.elide(&body, FONT_XS, false, tw);
+                v.text(
+                    r(x0 + SP4, y0 + 32.0, tw, 18.0),
+                    line,
+                    FONT_XS,
+                    t.text2,
+                    Align::Start,
+                );
+                let by = y0 + h0 - SP3 - CTRL_SM;
+                btn(
+                    v,
+                    cx,
+                    r(x0 + SP4, by, btn_w, CTRL_SM),
+                    "下載模型",
+                    None,
+                    Btn::Primary,
+                    download,
+                );
+                btn(
+                    v,
+                    cx,
+                    r(x0 + SP4 + btn_w + SP2, by, btn_w, CTRL_SM),
+                    "選其他模型",
+                    None,
+                    Btn::Ghost,
+                    others,
+                );
+                return;
+            }
+            let text_w = (w0 - 2.0 * SP4 - btn_w - SP3).max(80.0);
+            v.bold_text(
+                r(x0 + SP4, y0 + 12.0, text_w, 28.0),
+                TITLE_NEEDS_MODEL,
+                FONT_XL,
+                t.text,
+                Align::Start,
+            );
             let body_h = (h0 - 44.0 - 8.0).max(FONT_SM);
             v.wrapped(
                 r(x0 + SP4, y0 + 44.0, text_w, body_h),
@@ -56,9 +105,7 @@ pub fn card(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
                 "下載模型",
                 None,
                 Btn::Primary,
-                Some(Msg::Core(UiCommand::ModelSelectOrDownload(
-                    s.selected_model_id.clone(),
-                ))),
+                download,
             );
             btn(
                 v,
@@ -67,7 +114,7 @@ pub fn card(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
                 "選其他模型",
                 None,
                 Btn::Ghost,
-                Some(Msg::OpenSettings(SettingsTab::Models)),
+                others,
             );
         }
         Phase::Downloading => {
@@ -144,6 +191,31 @@ mod tests {
         assert!(v.find_hit(|a| *a == want).is_some());
         let other = Action::Click(Msg::OpenSettings(SettingsTab::Models));
         assert!(v.find_hit(|a| *a == other).is_some());
+    }
+
+    #[test]
+    fn narrow_needs_model_card_keeps_buttons_inside() {
+        let s = needs_model_state();
+        let ui = UiLocal::default();
+        let mut text = TextEngine::new();
+        let mut cx = Ctx {
+            s: &s,
+            ui: &ui,
+            t: Theme::for_mode(false),
+            text: &mut text,
+            scale: 1.0,
+        };
+        let mut v = View::new();
+        let rect = r(16.0, 52.0, 348.0, 88.0);
+        card(&mut v, &mut cx, rect);
+        let want = Action::Click(Msg::Core(UiCommand::ModelSelectOrDownload("base".into())));
+        assert!(v.find_hit(|a| *a == want).is_some());
+        for item in &v.items {
+            if let Item::Hit { rect: h, .. } = item {
+                assert!(h.origin.x.get() + h.size.width.get() <= 16.0 + 348.0);
+                assert!(h.origin.y.get() + h.size.height.get() <= 52.0 + 88.0);
+            }
+        }
     }
 
     #[test]
