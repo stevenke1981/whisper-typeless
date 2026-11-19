@@ -1,7 +1,11 @@
 //! Win32 輔助：取得自己的 HWND、不搶焦點地縮放視窗、切換置頂。
 //!
 //! AcmeUI（winit）不公開原生 HWND，因此以 `EnumWindows` 依行程 id 與可見性尋找。
-//! 所有呼叫都使用 `SWP_NOACTIVATE`，不會把焦點從使用者正在輸入的視窗搶走。
+//! 所有 `SetWindowPos` 都帶 `SWP_NOACTIVATE`，不會把焦點從使用者正在輸入的視窗搶走。
+//!
+//! 注意：視窗**不**加 `WS_EX_NOACTIVATE`——那會讓視窗永遠拿不到鍵盤焦點，
+//! Esc / Space / E 快捷鍵與文字輸入（含輸入法）全部失效。熱鍵 / PTT 路徑改由
+//! 「永不送出 `WindowRequest::Focus`、縮放 / 置頂一律 `SWP_NOACTIVATE`」保證不搶焦點。
 
 /// 邏輯尺寸 × DPI 縮放 → 實體像素（至少 1）。
 pub fn scaled_px(logical: f32, scale: f32) -> i32 {
@@ -19,13 +23,13 @@ mod imp {
     use winapi::shared::windef::HWND;
     use winapi::um::processthreadsapi::GetCurrentProcessId;
     use winapi::um::winuser::{
-        EnumWindows, GetWindowLongPtrW, GetWindowThreadProcessId, IsWindowVisible,
-        SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE,
-        SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_NOACTIVATE,
+        EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, SetWindowPos,
+        HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
     };
 
     struct Search {
         pid: u32,
+        title: Vec<u16>,
         found: HWND,
     }
 
@@ -36,18 +40,27 @@ mod imp {
         // SAFETY: hwnd 由 EnumWindows 提供。
         unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
         // SAFETY: 同上。
-        if pid == search.pid && unsafe { IsWindowVisible(hwnd) } != 0 {
+        if pid != search.pid || unsafe { IsWindowVisible(hwnd) } == 0 {
+            return TRUE;
+        }
+        let mut buf = [0u16; 256];
+        // SAFETY: buf 長度正確；GetWindowTextW 最多寫入 len - 1 個字元加結尾 0。
+        let len = unsafe { GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32) };
+        let len = len.max(0) as usize;
+        // 標題相符才算（避開檔案對話框、確認視窗等同行程的其他視窗）。
+        if search.title.is_empty() || buf[..len] == search.title[..] {
             search.found = hwnd;
             return 0; // 停止列舉
         }
         TRUE
     }
 
-    /// 本行程第一個可見的頂層視窗。
-    pub fn find_own_hwnd() -> Option<isize> {
+    /// 本行程中標題為 `title` 的可見頂層視窗（`title` 為空字串時取第一個可見視窗）。
+    pub fn find_own_hwnd(title: &str) -> Option<isize> {
         // SAFETY: 單純的 Win32 呼叫。
         let mut search = Search {
             pid: unsafe { GetCurrentProcessId() },
+            title: title.encode_utf16().collect(),
             found: std::ptr::null_mut(),
         };
         // SAFETY: enum_proc 只在此呼叫期間使用 search。
@@ -91,20 +104,11 @@ mod imp {
             ) != 0
         }
     }
-
-    /// 加上 `WS_EX_NOACTIVATE`：點擊視窗不會取得鍵盤焦點。
-    pub fn set_no_activate(hwnd: isize) {
-        // SAFETY: 同上。
-        unsafe {
-            let style = GetWindowLongPtrW(hwnd as HWND, GWL_EXSTYLE);
-            SetWindowLongPtrW(hwnd as HWND, GWL_EXSTYLE, style | WS_EX_NOACTIVATE as isize);
-        }
-    }
 }
 
 #[cfg(not(windows))]
 mod imp {
-    pub fn find_own_hwnd() -> Option<isize> {
+    pub fn find_own_hwnd(_title: &str) -> Option<isize> {
         None
     }
     pub fn set_size(_hwnd: isize, _width: i32, _height: i32) -> bool {
@@ -113,10 +117,9 @@ mod imp {
     pub fn set_topmost(_hwnd: isize, _topmost: bool) -> bool {
         false
     }
-    pub fn set_no_activate(_hwnd: isize) {}
 }
 
-pub use imp::{find_own_hwnd, set_no_activate, set_size, set_topmost};
+pub use imp::{find_own_hwnd, set_size, set_topmost};
 
 #[cfg(test)]
 mod tests {
