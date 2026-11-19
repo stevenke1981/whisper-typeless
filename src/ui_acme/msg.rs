@@ -10,6 +10,8 @@ pub enum FieldId {
     PttHotkey,
     TemplateName,
     TemplatePrompt,
+    /// OpenAI API 金鑰（遮蔽顯示；儲存後清空，不同步自狀態）。
+    OpenAiKey,
 }
 
 /// 可捲動區域。
@@ -70,6 +72,11 @@ pub enum SettingEdit {
     Module(ModKey, bool),
     Hotkey(String),
     PttHotkey(String),
+    /// 轉錄引擎 `"local"` / `"openai"`。
+    Engine(String),
+    /// 同意把語音傳送到 OpenAI。
+    OpenAiConsent(bool),
+    OpenAiModel(String),
 }
 
 impl SettingEdit {
@@ -96,6 +103,9 @@ impl SettingEdit {
             }
             SettingEdit::Hotkey(v) => s.hotkey = v.clone(),
             SettingEdit::PttHotkey(v) => s.ptt_hotkey = v.clone(),
+            SettingEdit::Engine(v) => s.engine = v.clone(),
+            SettingEdit::OpenAiConsent(v) => s.openai_consent = *v,
+            SettingEdit::OpenAiModel(v) => s.openai_model = v.clone(),
         }
     }
 
@@ -103,7 +113,11 @@ impl SettingEdit {
     pub fn needs_settings_changed(&self) -> bool {
         !matches!(
             self,
-            SettingEdit::VadThreshold(_) | SettingEdit::Temperature(_)
+            SettingEdit::VadThreshold(_)
+                | SettingEdit::Temperature(_)
+                | SettingEdit::Engine(_)
+                | SettingEdit::OpenAiConsent(_)
+                | SettingEdit::OpenAiModel(_)
         )
     }
 }
@@ -133,6 +147,8 @@ pub enum Msg {
     TemplateEditNew,
     TemplateEditSave,
     TemplateEditDelete,
+    /// 把金鑰欄位的內容存入金鑰存放區並清空欄位。
+    OpenAiKeySave,
 }
 
 impl From<UiCommand> for Msg {
@@ -160,6 +176,18 @@ mod tests {
         assert_eq!(s.n_threads, 8);
         assert!(!SettingEdit::Temperature(0.1).needs_settings_changed());
         assert!(SettingEdit::PttMode(false).needs_settings_changed());
+    }
+
+    #[test]
+    fn cloud_setting_edits_apply() {
+        let mut s = UiSettings::default();
+        SettingEdit::Engine("openai".into()).apply(&mut s);
+        SettingEdit::OpenAiConsent(true).apply(&mut s);
+        SettingEdit::OpenAiModel("gpt-transcribe".into()).apply(&mut s);
+        assert_eq!(s.engine, "openai");
+        assert!(s.openai_consent);
+        assert_eq!(s.openai_model, "gpt-transcribe");
+        assert!(!SettingEdit::OpenAiConsent(true).needs_settings_changed());
     }
 
     #[test]

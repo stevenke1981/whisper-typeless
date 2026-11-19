@@ -279,6 +279,15 @@ impl AcmeApp {
                     }
                 }
             }
+            // WP-A：金鑰交給核心後立刻清空欄位（含復原紀錄）。
+            Msg::OpenAiKeySave => {
+                self.blur();
+                let key = self.ui.fields.openai_key.text.trim().to_string();
+                super::controls::set_text(&mut self.ui.fields.openai_key, "");
+                if !key.is_empty() {
+                    self.send(UiCommand::SetOpenAiKey(crate::settings::Secret::new(key)));
+                }
+            }
         }
     }
 
@@ -324,7 +333,7 @@ impl AcmeApp {
         match id {
             FieldId::Hotkey => self.apply_setting(SettingEdit::Hotkey(text), false),
             FieldId::PttHotkey => self.apply_setting(SettingEdit::PttHotkey(text), false),
-            FieldId::TemplateName | FieldId::TemplatePrompt => {}
+            FieldId::TemplateName | FieldId::TemplatePrompt | FieldId::OpenAiKey => {}
         }
     }
 

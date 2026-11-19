@@ -92,7 +92,7 @@ pub struct AppViewState {
     pub engine: String,
     pub openai_model: String,
     pub openai_consent: bool,
-    /// 憑證存放區是否已有 OpenAI 金鑰（只存在狀態中，不寫入設定檔）。
+    /// 是否有可用的 OpenAI 金鑰（只存在狀態中，不寫入設定檔）。
     pub openai_key_set: bool,
 
     // ── 視窗 / 系統匣（WP-B）──

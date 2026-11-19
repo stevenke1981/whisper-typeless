@@ -56,6 +56,7 @@ pub struct Fields {
     pub ptt_hotkey: TextInputState,
     pub template_name: TextInputState,
     pub template_prompt: TextInputState,
+    pub openai_key: TextInputState,
 }
 
 impl Fields {
@@ -65,6 +66,8 @@ impl Fields {
         f.ptt_hotkey.placeholder = "Ctrl+Alt+L".into();
         f.template_name.placeholder = "模板名稱".into();
         f.template_prompt.placeholder = "提示詞（給 whisper 的情境提示）".into();
+        f.openai_key.placeholder = "貼上 sk-… 金鑰".into();
+        f.openai_key.password = true;
         f
     }
 
@@ -74,6 +77,7 @@ impl Fields {
             FieldId::PttHotkey => &self.ptt_hotkey,
             FieldId::TemplateName => &self.template_name,
             FieldId::TemplatePrompt => &self.template_prompt,
+            FieldId::OpenAiKey => &self.openai_key,
         }
     }
 
@@ -83,6 +87,7 @@ impl Fields {
             FieldId::PttHotkey => &mut self.ptt_hotkey,
             FieldId::TemplateName => &mut self.template_name,
             FieldId::TemplatePrompt => &mut self.template_prompt,
+            FieldId::OpenAiKey => &mut self.openai_key,
         }
     }
 }
@@ -154,6 +159,10 @@ pub fn field_key(
             _ => None,
         };
         if let Some(shortcut) = shortcut {
+            // 遮蔽欄位（金鑰）不允許複製 / 剪下到剪貼簿
+            if state.password && matches!(shortcut, "c" | "x") {
+                return FieldKey::Handled { edited: false };
+            }
             handle_keyboard_shortcut(state, shortcut, clipboard);
             return edited(state);
         }
@@ -411,5 +420,30 @@ mod tests {
         assert_eq!(f.get(FieldId::PttHotkey).text, "Ctrl+Alt+L");
         assert!(f.get(FieldId::Hotkey).text.is_empty());
         assert!(!f.get(FieldId::TemplateName).placeholder.is_empty());
+    }
+
+    #[test]
+    fn password_field_blocks_copy_and_cut() {
+        let f = Fields::new();
+        assert!(f.get(FieldId::OpenAiKey).password);
+        assert!(!f.get(FieldId::Hotkey).password);
+        let mut s = focused("sk-secret");
+        s.password = true;
+        let ctrl = |s: &mut TextInputState, c: &str| {
+            field_key(
+                s,
+                PlatformKey::Other,
+                true,
+                false,
+                false,
+                Some(c),
+                None,
+                None,
+            )
+        };
+        ctrl(&mut s, "a");
+        assert_eq!(ctrl(&mut s, "x"), FieldKey::Handled { edited: false });
+        assert_eq!(ctrl(&mut s, "c"), FieldKey::Handled { edited: false });
+        assert_eq!(s.text, "sk-secret");
     }
 }

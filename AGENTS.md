@@ -8,7 +8,7 @@ whisper-typeless：Windows 桌面即時語音轉文字工具。Rust + AcmeUI-Nat
 
 ## 核心價值（修改時不可倒退）
 
-1. **本機隱私優先**：預設引擎為本機 whisper，語音與文字不離開電腦。唯一的例外是使用者在設定中選擇 OpenAI 引擎並明確同意（`[transcription] openai_consent = true`）後，語音會送往 OpenAI 轉錄；其餘唯一的對外網路行為是下載模型（URL 來自 `model-catalog.json`）。API 金鑰只存在作業系統憑證存放區（`Secret` 型別，`Debug` 已遮蔽），不寫入 config.toml 或日誌。
+1. **本機隱私優先**：預設引擎為本機 whisper，語音與文字不離開電腦。唯一的例外是使用者在設定中選擇 OpenAI 引擎並明確同意（`[transcription] openai_consent = true`）後，語音會送往 OpenAI 轉錄；其餘唯一的對外網路行為是下載模型（URL 來自 `model-catalog.json`）。API 金鑰以 Windows DPAPI 加密存在使用者設定資料夾（`%APPDATA%/whisper-typeless/openai.key`），或由環境變數 `OPENAI_API_KEY` 提供；程式內以 `Secret` 型別傳遞（`Debug` 已遮蔽），絕不寫入 config.toml、日誌或錯誤紀錄。隱私模式開啟時一律本機轉錄；檔案模式一律本機。
 2. **結果落在焦點視窗**：辨識後寫入剪貼簿並模擬貼上（enigo / SendInput）。
 3. **中文優先**：預設 OpenCC `zh-TW`；另有 `zh-HK`、`zh-CN`、`raw`。
 4. **情境模板**：內建 `TemplateId`（會議、口語、技術、醫療、法律）與使用者 TOML 覆寫；控制初始提示詞與後處理。
@@ -91,6 +91,7 @@ cargo clippy --all-targets --target x86_64-pc-windows-msvc --no-default-features
   - `ui/appwindow.slint`、`ui/components/`、`ui/styles/tokens.slint` 與根目錄 `build.rs`（slint-build）。
 - `src/audio/`：`capture.rs` 麥克風（cpal）、`resampler.rs` 重採樣到 16 kHz、`vad.rs` 能量式靜音偵測；`mod.rs` 共用音訊常數。
 - `src/whisper/`：`engine.rs` 推論、`params.rs` 完整 whisper 參數、`session.rs`。
+- `src/cloud/openai/`：OpenAI Realtime 轉錄（需使用者同意）。`protocol.rs` 純函式（session.update、PCM16 封包、事件解析、依 commit 順序釋出的重排緩衝）、`session.rs`（`CloudSession`：送音訊、本機 VAD 段落 commit、停止時最多等 10 秒）、`transport.rs`（`Transport` trait 與 tokio-tungstenite WebSocket 薄轉接層）。金鑰存放區 `KeyStore`（DPAPI）在 `src/settings/secret.rs`。
 - `src/models/`：`registry.rs` 模型目錄（內嵌 + 外部覆寫）、`downloader.rs` 串流下載（備用網址；依校驗值長度選 SHA-1/SHA-256）、`manager.rs` 本機模型掃描。
 - `src/transcription/`：`pipeline.rs` `TranscriptionPipeline`（`for_live` 供即時錄音）、`opencc.rs`、`postprocess.rs`。
 - `src/context_templates/`：`templates.rs` `TemplateRegistry`（`templates/*.toml` 以 `include_str!` 內嵌，可由 `<exe>/templates/` 與 `<config>/whisper-typeless/templates/` 覆寫；以穩定 id 為鍵）、`detector.rs` 加權關鍵字偵測、`custom.rs`。

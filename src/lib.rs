@@ -7,6 +7,7 @@ pub const APP_NAME: &str = concat!("whisper-typeless v", env!("CARGO_PKG_VERSION
 pub mod app;
 pub mod audio;
 pub mod cli;
+pub mod cloud;
 pub mod context_templates;
 pub mod core;
 pub mod file_transcription;

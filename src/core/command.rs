@@ -64,7 +64,7 @@ pub enum UiCommand {
     UpdateSettings(Box<UiSettings>),
 
     // ── 雲端轉錄（WP-A）──
-    /// 把 OpenAI 金鑰存入作業系統憑證存放區（不寫入 config.toml）。
+    /// 把 OpenAI 金鑰加密存入使用者設定資料夾（DPAPI；不寫入 config.toml）。
     SetOpenAiKey(Secret),
     /// 刪除已儲存的 OpenAI 金鑰。
     ClearOpenAiKey,

@@ -87,8 +87,8 @@ pub trait Backend {
     fn clear_error_log(&mut self);
     /// 全域錯誤紀錄快照（新到舊）。
     fn error_log_snapshot(&self) -> Vec<String>;
-    /// 儲存（`Some`）或刪除（`None`）OpenAI 金鑰（作業系統憑證存放區，不寫入 config.toml）。
+    /// 儲存（`Some`）或刪除（`None`）OpenAI 金鑰（DPAPI 加密檔，不寫入 config.toml）。
     fn store_api_key(&mut self, key: Option<Secret>) -> Result<(), String>;
-    /// 憑證存放區是否已有 OpenAI 金鑰。
+    /// 是否有可用的 OpenAI 金鑰（已儲存的金鑰或環境變數 `OPENAI_API_KEY`）。
     fn has_api_key(&self) -> bool;
 }
