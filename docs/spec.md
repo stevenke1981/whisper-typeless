@@ -1,5 +1,7 @@
 # whisper-typeless — 技術規格書
 
+> 狀態：初版設計草案。實際行為以原始碼為準；尚未實作的項目與已知問題見 [路線圖](roadmap.md)。模組對照見 [架構說明](architecture.md) 與 [AGENTS.md](../AGENTS.md)。
+
 ## 1. 系統概述
 
 whisper-typeless 是一個即時語音轉文字應用，
