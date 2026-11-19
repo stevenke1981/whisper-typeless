@@ -223,7 +223,7 @@ impl Controller {
             UiCommand::SetFileOutputFormat(fmt) => s.file_output_format = fmt,
             UiCommand::UpdateSettings(settings) => s.apply_ui_settings(&settings),
 
-            // WP-A：金鑰存入憑證存放區；結果反映在 openai_key_set / 狀態列。
+            // WP-A：金鑰加密存入設定資料夾（DPAPI）；結果反映在 openai_key_set / 狀態列。
             UiCommand::SetOpenAiKey(key) => self.store_api_key(Some(key)),
             UiCommand::ClearOpenAiKey => self.store_api_key(None),
 
@@ -427,8 +427,8 @@ impl Controller {
             opencc_enabled: self.state.mod_opencc,
             conversion_mode: self.state.conversion_mode.clone(),
             whisper_params: self.whisper_params(),
-            // 隱私：未經同意一律本機轉錄
-            engine: if self.state.openai_consent {
+            // 隱私：未經同意或開啟隱私模式時一律本機轉錄
+            engine: if self.state.openai_consent && !self.state.privacy_mode {
                 TranscriptionEngine::from_str_lossy(&self.state.engine)
             } else {
                 TranscriptionEngine::Local

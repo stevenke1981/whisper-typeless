@@ -44,9 +44,13 @@
 //!   / `CoreEvent::PttKey` 進入核心；畫面層處理它們時**不得**顯示、啟用或聚焦視窗，
 //!   辨識結果要落在使用者原本的焦點視窗。
 //! - 隱私模式（`privacy_mode`）：不保留錄音檔、輸出後清除剪貼簿。
-//! - 預設本機轉錄：語音與文字不離開本機；只有使用者選擇 OpenAI 引擎且 `openai_consent`
-//!   為 true 時，[`RecordingRequest::engine`] 才會是 `OpenAi`（由 `Controller` 把關）。
-//!   API 金鑰以 [`crate::settings::Secret`] 傳遞（`Debug` 遮蔽），只交給 `Backend::store_api_key`。
+//! - 預設本機轉錄：語音與文字不離開本機；只有使用者選擇 OpenAI 引擎、`openai_consent`
+//!   為 true 且未開啟隱私模式時，[`RecordingRequest::engine`] 才會是 `OpenAi`（由 `Controller`
+//!   把關）。檔案模式一律本機。
+//! - API 金鑰以 [`crate::settings::Secret`] 傳遞（`Debug` 遮蔽），只交給 `Backend::store_api_key`；
+//!   正式版以 Windows DPAPI 加密存在使用者設定資料夾（`openai.key`），或讀環境變數
+//!   `OPENAI_API_KEY`。金鑰在 `RealBackend` 內解析，不放進 `RecordingRequest`，
+//!   絕不寫入 config.toml、日誌或錯誤紀錄。
 //! - 使用者可見字串一律 zh-TW。
 //!
 //! ## 模組

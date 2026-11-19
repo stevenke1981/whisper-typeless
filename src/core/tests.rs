@@ -755,3 +755,27 @@ fn window_and_tray_contract() {
     assert!(c.state().quit_requested);
     assert_eq!(c.handle(UiCommand::Quit), vec![ViewRequest::Quit]);
 }
+
+#[test]
+fn privacy_mode_refuses_cloud_engine() {
+    let (mut c, fake) = controller();
+    c.state_mut().engine = "openai".into();
+    c.state_mut().openai_consent = true;
+    c.state_mut().privacy_mode = true;
+    c.handle(UiCommand::ToggleRecording);
+    c.handle(UiCommand::ToggleRecording);
+    c.state_mut().privacy_mode = false;
+    c.handle(UiCommand::ToggleRecording);
+    let engines: Vec<_> = fake
+        .calls()
+        .into_iter()
+        .filter_map(|call| match call {
+            Call::StartRecording(req) => Some(req.engine),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        engines,
+        vec![TranscriptionEngine::Local, TranscriptionEngine::OpenAi]
+    );
+}

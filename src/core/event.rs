@@ -113,6 +113,6 @@ pub enum CoreEvent {
     Tray(TrayAction),
 
     // ── 雲端轉錄（WP-A）──
-    /// OpenAI 金鑰是否已存在於憑證存放區。
+    /// 是否有可用的 OpenAI 金鑰（只傳有無，不傳內容）。
     OpenAiKeyState(bool),
 }

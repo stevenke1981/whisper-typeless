@@ -21,7 +21,8 @@ use crate::core::event::CoreEvent;
 use crate::core::state::AppViewState;
 use crate::core::Notifier;
 use crate::settings::config::AppConfig;
-use crate::settings::secret::Secret;
+use crate::settings::config::TranscriptionEngine;
+use crate::settings::secret::{resolve_openai_key, KeyStore, Secret};
 use crate::settings::ui_settings::{conversion_mode_from_str, UiSettings};
 use crate::transcription::opencc::OpenCCProcessor;
 use crate::whisper::{WhisperEngine, WhisperParams};
@@ -128,6 +129,8 @@ pub struct RealBackend {
     recording: Option<recording::RecordingHandle>,
     hotkey_tx: Option<std::sync::mpsc::Sender<String>>,
     ptt_tx: Option<std::sync::mpsc::Sender<String>>,
+    /// OpenAI 金鑰存放區（DPAPI 加密檔）；無法取得設定資料夾時為 `None`（仍可用環境變數）。
+    key_store: Option<KeyStore>,
 }
 
 impl RealBackend {
@@ -152,6 +155,7 @@ impl RealBackend {
             recording: None,
             hotkey_tx: None,
             ptt_tx: None,
+            key_store: KeyStore::default_location(),
         }
     }
 
@@ -170,8 +174,11 @@ impl RealBackend {
 
         // 全域錯誤紀錄（tracing WARN/ERROR）→ 畫面；啟動前已發生的錯誤也要顯示
         notifier.send(CoreEvent::ErrorLogChanged);
-        let n = notifier;
+        let n = notifier.clone();
         crate::ui::error_log::global().set_listener(move || n.send(CoreEvent::ErrorLogChanged));
+
+        // 金鑰狀態（只送「有沒有」，不送內容）
+        notifier.send(CoreEvent::OpenAiKeyState(self.has_api_key()));
     }
 }
 
@@ -181,6 +188,14 @@ impl Backend for RealBackend {
     }
 
     fn start_recording(&mut self, req: RecordingRequest) -> RecordingStart {
+        // 金鑰只在這裡解析，不放進 RecordingRequest、不寫入日誌。
+        let openai_key = match req.engine {
+            TranscriptionEngine::OpenAi => match resolve_openai_key(self.key_store.as_ref()) {
+                Some(key) => Some(key),
+                None => return RecordingStart::Failed("尚未設定 OpenAI API 金鑰".into()),
+            },
+            TranscriptionEngine::Local => None,
+        };
         let model_id = self.models.selected_model_id.lock().unwrap().clone();
         let path = model::model_path(&self.models.models_dir, &model_id);
         match recording::start_recording(
@@ -191,6 +206,7 @@ impl Backend for RealBackend {
             req,
             self.models.runtime.clone(),
             self.models.notifier.clone(),
+            openai_key,
         ) {
             Ok(handle) => {
                 self.recording = Some(handle);
@@ -311,12 +327,20 @@ impl Backend for RealBackend {
         crate::ui::error_log::global().snapshot_newest_first()
     }
 
-    // WP-A：改為作業系統憑證存放區。
-    fn store_api_key(&mut self, _key: Option<Secret>) -> Result<(), String> {
-        Err("尚未實作".into())
+    /// 金鑰以 DPAPI 加密存到使用者設定資料夾（不寫入 config.toml）。
+    fn store_api_key(&mut self, key: Option<Secret>) -> Result<(), String> {
+        let store = self
+            .key_store
+            .as_ref()
+            .ok_or_else(|| "無法取得設定資料夾".to_string())?;
+        match key {
+            Some(key) => store.store(&key),
+            None => store.clear(),
+        }
     }
 
+    /// 已儲存的金鑰或環境變數 `OPENAI_API_KEY`。
     fn has_api_key(&self) -> bool {
-        false
+        resolve_openai_key(self.key_store.as_ref()).is_some()
     }
 }
