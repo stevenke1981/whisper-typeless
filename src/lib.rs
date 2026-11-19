@@ -8,6 +8,7 @@ pub mod app;
 pub mod audio;
 pub mod cli;
 pub mod context_templates;
+pub mod core;
 pub mod file_transcription;
 pub mod models;
 pub mod output;
