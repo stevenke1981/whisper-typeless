@@ -70,7 +70,8 @@ jobs:
           $zip = Join-Path $PWD "dist/$name.zip"
           Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          "$hash  $name.zip" | Out-File -FilePath dist/SHA256SUMS.txt -Encoding ascii
+          # LF 結尾，讓 Linux/macOS 的 `sha256sum -c` 也能直接驗證
+          [IO.File]::WriteAllText((Join-Path $PWD 'dist/SHA256SUMS.txt'), "$hash  $name.zip`n")
           "zip=dist/$name.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Upload artifacts
