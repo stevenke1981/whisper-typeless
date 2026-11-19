@@ -1,0 +1,12 @@
+id = "medical"
+name = "醫療紀錄"
+initial_prompt = "這是醫療診療的對話，包含醫學術語、藥品名稱和診斷名稱。"
+language_override = "zh"
+temperature_override = 0.0
+keywords = ["症狀", "診斷", "治療", "藥物", "手術", "檢查", "病患", "醫師"]
+
+[postprocess]
+add_punctuation = true
+formal_style = true
+preserve_english_terms = false
+remove_fillers = ["嗯", "啊", "那個", "就是說"]

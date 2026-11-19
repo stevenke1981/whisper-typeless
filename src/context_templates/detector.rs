@@ -1,5 +1,14 @@
 use super::{TemplateId, TemplateRegistry};
 
+/// 關鍵字權重：越長越具體（3 字以上 1.5，否則 1.0）。
+fn keyword_weight(kw: &str) -> f32 {
+    if kw.chars().count() >= 3 {
+        1.5
+    } else {
+        1.0
+    }
+}
+
 pub struct ContextDetector {
     registry: TemplateRegistry,
 }
@@ -12,14 +21,15 @@ impl ContextDetector {
     pub fn detect(&self, text: &str) -> TemplateId {
         let text_lower = text.to_lowercase();
         let mut best_id = TemplateId::Casual;
-        let mut best_score = 0usize;
+        let mut best_score = 0.0f32;
 
         for template in self.registry.all() {
-            let score = template
+            let score: f32 = template
                 .keywords
                 .iter()
-                .filter(|kw| text_lower.contains(kw.as_str()))
-                .count();
+                .filter(|kw| !kw.is_empty() && text_lower.contains(&kw.to_lowercase()))
+                .map(|kw| keyword_weight(kw))
+                .sum();
 
             if score > best_score {
                 best_score = score;
@@ -68,5 +78,17 @@ mod tests {
     fn detector_empty_text() {
         let detector = ContextDetector::new(TemplateRegistry::new());
         assert_eq!(detector.detect(""), TemplateId::Casual);
+    }
+
+    #[test]
+    fn detector_medical_and_legal() {
+        let detector = ContextDetector::new(TemplateRegistry::builtin_only());
+        assert_eq!(detector.detect("醫師說症狀需要檢查"), TemplateId::Medical);
+        assert_eq!(detector.detect("律師提出合約條款"), TemplateId::Legal);
+    }
+
+    #[test]
+    fn keyword_weight_prefers_specific() {
+        assert!(keyword_weight("資料庫") > keyword_weight("會議"));
     }
 }

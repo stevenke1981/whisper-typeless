@@ -1,0 +1,12 @@
+id = "legal"
+name = "法律文書"
+initial_prompt = "這是法律相關的對話，包含法律術語和條文引用。"
+language_override = "zh"
+temperature_override = 0.0
+keywords = ["合約", "條款", "法律", "訴訟", "判決", "法院", "律師", "被告"]
+
+[postprocess]
+add_punctuation = true
+formal_style = true
+preserve_english_terms = false
+remove_fillers = ["嗯", "啊", "那個", "就是說"]

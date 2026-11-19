@@ -256,6 +256,45 @@ mod tests {
     }
 
     #[test]
+    fn txt_joins_with_newline_no_trailing() {
+        let out = format_transcript(&sample_segments(), ExportFormat::Txt);
+        assert_eq!(out, "Hello world.\nThis is a test.");
+    }
+
+    #[test]
+    fn srt_exact_layout() {
+        let out = format_transcript(&sample_segments(), ExportFormat::Srt);
+        assert_eq!(
+            out,
+            "1\n00:00:00,000 --> 00:00:01,000\nHello world.\n\n2\n00:00:01,200 --> 00:00:02,500\nThis is a test.\n"
+        );
+    }
+
+    #[test]
+    fn vtt_exact_layout_and_trim() {
+        let segs = vec![TranscriptSegment {
+            text: "  你好  ".into(),
+            start_ms: 3_600_000,
+            end_ms: 3_601_005,
+        }];
+        let out = format_transcript(&segs, ExportFormat::Vtt);
+        assert_eq!(out, "WEBVTT\n\n01:00:00.000 --> 01:00:01.005\n你好\n\n");
+    }
+
+    #[test]
+    fn empty_segments_formats() {
+        assert_eq!(format_transcript(&[], ExportFormat::Txt), "");
+        assert_eq!(format_transcript(&[], ExportFormat::Srt), "");
+        assert_eq!(format_transcript(&[], ExportFormat::Vtt), "WEBVTT\n\n");
+    }
+
+    #[test]
+    fn negative_ms_clamped() {
+        assert_eq!(ms_to_srt(-5), "00:00:00,000");
+        assert_eq!(ms_to_vtt(-5), "00:00:00.000");
+    }
+
+    #[test]
     fn ms_to_srt_vtt_matches() {
         let ms = 123_456; // 2min 3sec 456ms
         let srt = ms_to_srt(ms);

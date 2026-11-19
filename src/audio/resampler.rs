@@ -59,3 +59,64 @@ impl Resampler {
         RESAMPLER_CHUNK_SIZE
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(rate: u32, n: usize) -> usize {
+        let mut r = Resampler::new(rate).unwrap();
+        let input = vec![0.1f32; n];
+        r.process(&input).unwrap().len()
+    }
+
+    #[test]
+    fn passthrough_at_target_rate() {
+        let mut r = Resampler::new(TARGET_SAMPLE_RATE).unwrap();
+        let input: Vec<f32> = (0..777).map(|i| i as f32 / 1000.0).collect();
+        assert_eq!(r.process(&input).unwrap(), input);
+    }
+
+    #[test]
+    fn downsample_48k_ratio_is_one_third() {
+        let n = RESAMPLER_CHUNK_SIZE * 20;
+        let out = run(48_000, n);
+        let expected = n / 3;
+        assert!(out.abs_diff(expected) < expected / 5, "out={out}");
+    }
+
+    #[test]
+    fn downsample_44100_ratio() {
+        let n = RESAMPLER_CHUNK_SIZE * 20;
+        let out = run(44_100, n);
+        let expected = n as f64 * 16_000.0 / 44_100.0;
+        assert!((out as f64 - expected).abs() < expected * 0.2, "out={out}");
+    }
+
+    #[test]
+    fn upsample_8k_doubles() {
+        let n = RESAMPLER_CHUNK_SIZE * 10;
+        let out = run(8_000, n);
+        let expected = n * 2;
+        assert!(out.abs_diff(expected) < expected / 5, "out={out}");
+    }
+
+    #[test]
+    fn short_input_buffers_without_output() {
+        assert_eq!(run(48_000, RESAMPLER_CHUNK_SIZE - 1), 0);
+    }
+
+    #[test]
+    fn chunked_input_accumulates() {
+        let mut r = Resampler::new(48_000).unwrap();
+        let half = vec![0.0f32; RESAMPLER_CHUNK_SIZE / 2];
+        assert!(r.process(&half).unwrap().is_empty());
+        assert!(!r.process(&half).unwrap().is_empty());
+    }
+
+    #[test]
+    fn constants_exposed() {
+        assert_eq!(Resampler::target_rate(), 16_000);
+        assert_eq!(Resampler::chunk_size(), RESAMPLER_CHUNK_SIZE);
+    }
+}
