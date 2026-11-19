@@ -65,6 +65,14 @@ dirs = "5"
 futures = "0.3"
 bytes = "1"
 
+# AcmeUI shell spike (--acme-shell), pinned to a fixed upstream revision
+acme-core = { git = "https://github.com/stevenke1981/AcmeUI-Native", rev = "c2e0fd9765d0f25119a240ad1adb378c045df63f" }
+acme-platform = { git = "https://github.com/stevenke1981/AcmeUI-Native", rev = "c2e0fd9765d0f25119a240ad1adb378c045df63f" }
+acme-text = { git = "https://github.com/stevenke1981/AcmeUI-Native", rev = "c2e0fd9765d0f25119a240ad1adb378c045df63f" }
+
+[dev-dependencies]
+acme-render-cpu = { git = "https://github.com/stevenke1981/AcmeUI-Native", rev = "c2e0fd9765d0f25119a240ad1adb378c045df63f" }
+
 [build-dependencies]
 slint-build = "1.7"
 

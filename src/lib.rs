@@ -15,6 +15,7 @@ pub mod output;
 pub mod settings;
 pub mod transcription;
 pub mod ui;
+pub mod ui_acme;
 pub mod whisper;
 
 slint::include_modules!();

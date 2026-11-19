@@ -14,6 +14,15 @@ fn main() -> Result<()> {
         }
     };
 
+    if command == cli::Command::AcmeShell {
+        cli::attach_parent_console();
+        if let Err(e) = whisper_typeless::ui_acme::run_shell() {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
     if command != cli::Command::RunGui {
         cli::attach_parent_console();
         let code = cli::run_headless(command).unwrap_or(0);
