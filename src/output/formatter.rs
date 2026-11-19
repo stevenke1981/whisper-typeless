@@ -7,6 +7,17 @@ pub struct FormatterConfig {
     pub add_timestamp: bool,
 }
 
+impl FormatterConfig {
+    /// 不做任何附加（即時錄音路徑：原樣輸出到焦點視窗）
+    pub fn raw() -> Self {
+        Self {
+            append_newline: false,
+            append_space: false,
+            add_timestamp: false,
+        }
+    }
+}
+
 impl Default for FormatterConfig {
     fn default() -> Self {
         Self {
@@ -24,6 +35,11 @@ pub struct OutputFormatter {
 impl OutputFormatter {
     pub fn new(config: FormatterConfig) -> Self {
         Self { config }
+    }
+
+    /// 原樣輸出的 formatter
+    pub fn passthrough() -> Self {
+        Self::new(FormatterConfig::raw())
     }
 
     pub fn format(&self, text: &str) -> String {

@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use tracing::error;
 
 pub(super) fn save_recording_wav(samples: &[f32], sample_rate: u32) -> anyhow::Result<PathBuf> {
     use std::io::Write;
@@ -40,18 +39,6 @@ pub(super) fn save_recording_wav(samples: &[f32], sample_rate: u32) -> anyhow::R
     }
 
     Ok(path)
-}
-
-pub(super) fn inject_text_to_focused_window(text: &str) {
-    use enigo::{Enigo, Keyboard, Settings};
-    match Enigo::new(&Settings::default()) {
-        Ok(mut enigo) => {
-            let _ = enigo.text(text);
-        }
-        Err(e) => {
-            error!("enigo 初始化失敗: {e}");
-        }
-    }
 }
 
 pub(super) fn current_time_str() -> String {
