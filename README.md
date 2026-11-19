@@ -41,7 +41,7 @@ whisper-typeless 把你的語音即時轉成文字，並貼到你正在輸入的
 3. 若啟動時出現缺少 `VCRUNTIME140.dll` 或 `MSVCP140.dll` 的錯誤，請安裝 [Microsoft Visual C++ Redistributable（x64）](https://aka.ms/vs/17/release/vc_redist.x64.exe)。
 4. 執行 `whisper-typeless.exe`。
 
-系統需求：Windows 10/11（64 位元）、一個麥克風。Release zip 只含 CPU 版本（不需要 CUDA 執行時）；需要 NVIDIA CUDA 加速時，請從原始碼建置（見下方）。
+系統需求：Windows 10/11（64 位元）、一個麥克風。Release 提供兩種 zip：`-cpu`（不需要任何 GPU 執行時）與 `-vulkan`（Vulkan GPU 加速，支援 NVIDIA / AMD / Intel 顯示卡，需要顯示卡驅動內建的 Vulkan 執行環境）。建議優先使用 Tiny / Base / Small 小型模型。需要 NVIDIA CUDA 加速時，請從原始碼建置（見下方）。
 
 ### 首次啟動與模型下載
 
@@ -184,6 +184,7 @@ remove_fillers = ["嗯", "啊", "那個"]
 .\scripts\dev.ps1 lint       # clippy（-D warnings）與 fmt 檢查
 .\scripts\dev.ps1 build      # CPU 版 release 建置
 .\scripts\dev.ps1 build -Cuda  # 加入 CUDA 支援（需要 CUDA Toolkit）
+.\scripts\dev.ps1 build -Vulkan # 加入 Vulkan 支援（需要 Vulkan SDK，並設定 VULKAN_SDK）
 ```
 
 AcmeUI-Native 相依套件以固定 git rev 引用 `github.com/stevenke1981/AcmeUI-Native`，首次建置需要能連到 GitHub。
@@ -234,6 +235,6 @@ cargo build --release --no-default-features --target x86_64-pc-windows-msvc
 
 **Config:** `%APPDATA%\whisper-typeless\config.toml` (run `whisper-typeless.exe --config-path` to confirm). CLI flags: `--version`, `--help`, `--config-path`, `--self-check`, `--ui acme|slint` (default `acme`). The AcmeUI renderer defaults to CPU; override with `ACME_RENDER_BACKEND=cpu|gpu|auto`.
 
-**Build from source:** Rust (MSVC toolchain), Visual Studio Build Tools, CMake and libclang (set `LIBCLANG_PATH`). Run `.\scripts\dev.ps1 build` for CPU, or `.\scripts\dev.ps1 build -Cuda` with the CUDA Toolkit. AcmeUI-Native dependencies are fetched from GitHub at a pinned revision, so the first build needs network access. See the Chinese section for raw cargo commands.
+**Build from source:** Rust (MSVC toolchain), Visual Studio Build Tools, CMake and libclang (set `LIBCLANG_PATH`). Run `.\scripts\dev.ps1 build` for CPU, `.\scripts\dev.ps1 build -Vulkan` with the Vulkan SDK (`VULKAN_SDK` set, `glslc` required), or `.\scripts\dev.ps1 build -Cuda` with the CUDA Toolkit. Releases ship `-cpu` and `-vulkan` zips; the Vulkan build delay-loads `vulkan-1.dll` and falls back to CPU if GPU initialisation fails (toggle in Settings, takes effect on next model load). AcmeUI-Native dependencies are fetched from GitHub at a pinned revision, so the first build needs network access. See the Chinese section for raw cargo commands.
 
 **License:** MIT. See [LICENSE](LICENSE).

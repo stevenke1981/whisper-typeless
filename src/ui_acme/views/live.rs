@@ -670,12 +670,14 @@ const STATUS_PAD: f32 = 12.0;
 const STATUS_GAP: f32 = 10.0;
 const STATUS_MIN_TEXT: f32 = 56.0;
 
-/// 把裝置標籤縮短（"CPU (需要 cuda 特性)" → "CPU"，"GPU (CUDA)" → "CUDA"）。
+/// 把裝置標籤縮短（"CPU（此版本未含 GPU）" → "CPU"，"GPU (Vulkan)" → "Vulkan"）。
 pub(super) fn short_device(label: &str) -> String {
     if label.starts_with("CPU") {
         "CPU".into()
     } else if label.contains("CUDA") {
         "CUDA".into()
+    } else if label.contains("Vulkan") {
+        "Vulkan".into()
     } else if label.contains("Metal") {
         "Metal".into()
     } else {
@@ -785,7 +787,7 @@ mod status_tests {
     fn state(model: &str, ptt: bool) -> AppViewState {
         AppViewState {
             model_name: model.into(),
-            device_label: "CPU (需要 cuda 特性)".into(),
+            device_label: "CPU（此版本未含 GPU）".into(),
             hotkey: "Ctrl+Shift+W".into(),
             ptt_hotkey: "Ctrl+Alt+L".into(),
             ptt_mode: ptt,
@@ -797,7 +799,9 @@ mod status_tests {
 
     #[test]
     fn short_device_labels() {
-        assert_eq!(short_device("CPU (需要 cuda 特性)"), "CPU");
+        assert_eq!(short_device("CPU（此版本未含 GPU）"), "CPU");
+        assert_eq!(short_device("CPU（GPU 初始化失敗）"), "CPU");
+        assert_eq!(short_device("GPU (Vulkan)"), "Vulkan");
         assert_eq!(short_device("CPU"), "CPU");
         assert_eq!(short_device("GPU (CUDA)"), "CUDA");
         assert_eq!(short_device("GPU (Metal)"), "Metal");

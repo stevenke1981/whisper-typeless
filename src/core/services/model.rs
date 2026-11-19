@@ -15,9 +15,41 @@ use crate::core::Notifier;
 
 // ─── 模型列表 ─────────────────────────────────────────────────────────────────
 
-pub(crate) fn model_entries_from(models: &[ModelInfo]) -> Vec<ModelEntryView> {
+/// 清單排序：建議的小型模型（tiny / base / small…）置頂、由小到大；其餘維持 catalog 順序。
+pub(crate) fn ordered_for_display(models: &[ModelInfo]) -> Vec<&ModelInfo> {
+    let mut rec: Vec<&ModelInfo> = models.iter().filter(|m| m.recommended).collect();
+    rec.sort_by_key(|m| m.size.disk_mb);
+    rec.extend(models.iter().filter(|m| !m.recommended));
+    rec
+}
+
+/// 在已下載的模型中挑最小的一個（選用模型遺失時自動改用；絕不建議更大的模型）。
+pub(crate) fn smallest_downloaded(models: &[ModelInfo]) -> Option<&ModelInfo> {
     models
         .iter()
+        .filter(|m| m.is_downloaded)
+        .min_by_key(|m| m.size.disk_mb)
+}
+
+/// 需要明確確認大小才下載：不在建議清單內（medium 以上）的模型。
+pub(crate) fn needs_size_confirmation(info: &ModelInfo) -> bool {
+    !info.recommended
+}
+
+/// 同步檢查磁碟，若 `missing_id` 的檔案不存在，回傳可改用的最小已下載模型 id。
+pub(crate) fn fallback_model_id(models_dir: &Path, missing_id: &str) -> Option<String> {
+    let mut models = crate::models::registry::ModelRegistry::all();
+    for m in &mut models {
+        m.is_downloaded = model_path(models_dir, &m.id).exists();
+    }
+    smallest_downloaded(&models)
+        .map(|m| m.id.clone())
+        .filter(|id| id != missing_id)
+}
+
+pub(crate) fn model_entries_from(models: &[ModelInfo]) -> Vec<ModelEntryView> {
+    ordered_for_display(models)
+        .into_iter()
         .map(|m| ModelEntryView {
             id: m.id.clone(),
             display_name: m.display_name.clone(),
@@ -115,14 +147,19 @@ impl ModelContext {
                 return;
             }
 
-            if confirm_if_missing {
+            if confirm_if_missing || needs_size_confirmation(&info) {
                 let display_name = info.display_name.clone();
                 let size_mb = info.size.disk_mb;
                 let result = rfd::AsyncMessageDialog::new()
                     .set_level(rfd::MessageLevel::Warning)
                     .set_title("模型尚未下載")
                     .set_description(format!(
-                        "語音辨識模型 {display_name} 尚未下載。\n\n大小約 {size_mb} MB，是否現在自動下載？\n下載完成後會自動選用並預載。"
+                        "語音辨識模型 {display_name} 尚未下載。\n\n大小約 {size_mb} MB，是否現在自動下載？\n下載完成後會自動選用並預載。{}",
+                        if needs_size_confirmation(&info) {
+                            "\n\n提醒：此模型較大，下載與辨識都會比較慢；小型模型（Tiny / Base / Small）通常已足夠。"
+                        } else {
+                            ""
+                        }
                     ))
                     .set_buttons(rfd::MessageButtons::YesNo)
                     .show()
@@ -245,6 +282,58 @@ mod tests {
         assert_eq!(download_ratio(50, Some(100)), 0.5);
         assert_eq!(download_ratio(100, Some(100)), 1.0);
         assert_eq!(download_ratio(123, None), 0.5);
+    }
+
+    fn mi(id: &str, mb: u64, rec: bool, dl: bool) -> ModelInfo {
+        ModelInfo {
+            id: id.into(),
+            display_name: id.into(),
+            size: crate::models::registry::ModelSize {
+                disk_mb: mb,
+                vram_mb: mb,
+            },
+            speed_multiplier: 1.0,
+            quality_stars: 1,
+            is_english_only: false,
+            sha256: String::new(),
+            download_url: String::new(),
+            mirror_urls: vec![],
+            local_path: None,
+            is_downloaded: dl,
+            recommended: rec,
+        }
+    }
+
+    #[test]
+    fn recommended_models_listed_first_smallest_first() {
+        let models = vec![
+            mi("medium", 1500, false, false),
+            mi("small", 466, true, false),
+            mi("tiny", 75, true, false),
+            mi("base", 142, true, false),
+        ];
+        let ids: Vec<_> = model_entries_from(&models)
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(ids, ["tiny", "base", "small", "medium"]);
+    }
+
+    #[test]
+    fn smallest_downloaded_ignores_missing_models() {
+        let models = vec![
+            mi("tiny", 75, true, false),
+            mi("small", 466, true, true),
+            mi("medium", 1500, false, true),
+        ];
+        assert_eq!(smallest_downloaded(&models).unwrap().id, "small");
+        assert!(smallest_downloaded(&[mi("tiny", 75, true, false)]).is_none());
+    }
+
+    #[test]
+    fn only_non_recommended_models_need_size_confirmation() {
+        assert!(!needs_size_confirmation(&mi("small", 466, true, false)));
+        assert!(needs_size_confirmation(&mi("medium", 1500, false, false)));
     }
 
     #[test]

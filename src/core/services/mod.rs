@@ -196,8 +196,19 @@ impl Backend for RealBackend {
             },
             TranscriptionEngine::Local => None,
         };
-        let model_id = self.models.selected_model_id.lock().unwrap().clone();
-        let path = model::model_path(&self.models.models_dir, &model_id);
+        let mut model_id = self.models.selected_model_id.lock().unwrap().clone();
+        let mut path = model::model_path(&self.models.models_dir, &model_id);
+        // 選用的模型遺失時，自動改用已下載的最小模型，而不是跳出下載提示。
+        if req.engine == TranscriptionEngine::Local && !path.exists() {
+            if let Some(fallback) = model::fallback_model_id(&self.models.models_dir, &model_id) {
+                self.models.notifier.send(CoreEvent::Status(format!(
+                    "模型 {model_id} 尚未下載，改用已下載的 {fallback}"
+                )));
+                *self.models.selected_model_id.lock().unwrap() = fallback.clone();
+                model_id = fallback;
+                path = model::model_path(&self.models.models_dir, &model_id);
+            }
+        }
         match recording::start_recording(
             &self.models.tokio,
             &self.config,
