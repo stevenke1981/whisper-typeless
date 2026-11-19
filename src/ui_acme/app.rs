@@ -4,7 +4,11 @@
 //! - 背景事件：`Notifier` 的 wake → acme `Waker::wake` → [`Application::wake`] →
 //!   `EventQueue::drain` → `Controller::apply`。
 //! - 指標：`ClickDetector` + `HitTestLayer` → [`Action`] → [`Msg`] → `Controller::handle`。
-//! - 鍵盤：文字框有焦點時交給 acme-textinput；否則 `core::keys::key_to_command`。
+//! - 鍵盤：文字框有焦點時交給 acme-textinput（快捷鍵欄：按下組合鍵即錄入）；否則先看視窗內
+//!   Ctrl 快捷鍵（`Ctrl+,` 設定、`Ctrl+1/2` 即時 / 檔案、設定開啟時 `Ctrl+1..6` 分頁），
+//!   再交給 `core::keys::key_to_command`。
+//! - 即改即存：開關 / 分段 / 步進器與 `SetPrivacyMode` 等直接設定指令之後立刻 `SaveSettings`；
+//!   滑桿放開時、快捷鍵欄失焦時（有改過）才寫檔。
 //! - `ViewRequest`：尺寸 / 置頂走 [`hwnd`]（`SWP_NOACTIVATE`）、拖曳 = `DragMove`；隱藏 = 縮到系統匣
 //!   （`SW_HIDE`；沒有系統匣時退回關閉視窗）。
 //! - 系統匣（[`crate::tray`]）：`AppViewState::window_hidden` / `quit_requested` 由核心設定，
@@ -25,7 +29,9 @@ use acme_platform::{
     RenderBackendPreference, Waker, WindowConfig, WindowId, WindowRequest,
 };
 
-use super::controls::{field_key, ime_commit, ime_preedit, offset_at_x, slider_value, FieldKey};
+use super::controls::{
+    field_key, hotkey_combo, ime_commit, ime_preedit, offset_at_x, slider_value, FieldKey,
+};
 use super::hwnd;
 use super::local::UiLocal;
 use super::msg::{FieldId, Msg, ScrollId, SettingEdit, SettingsTab, SliderKind};
@@ -72,6 +78,10 @@ pub struct AcmeApp {
     hold: Option<Msg>,
     /// 拖曳中的滑桿。
     slider: Option<(NodeId, SliderSpec)>,
+    /// 這次拖曳改過滑桿值：放開時才寫檔（即改即存，拖曳中不寫）。
+    slider_dirty: bool,
+    /// 有焦點的快捷鍵欄位改過內容：失焦時才寫檔。
+    field_dirty: bool,
     ime_area: Option<[f32; 4]>,
     ime_allowed: Option<bool>,
     clipboard: Option<Clipboard>,
@@ -114,6 +124,8 @@ impl AcmeApp {
             started: Instant::now(),
             hold: None,
             slider: None,
+            slider_dirty: false,
+            field_dirty: false,
             ime_area: None,
             ime_allowed: None,
             clipboard: None,
@@ -300,7 +312,14 @@ impl AcmeApp {
             s.is_recording,
         );
         match msg {
-            Msg::Core(cmd) => self.send(cmd),
+            // 即改即存：會改到持久化設定的指令之後立刻寫檔。
+            Msg::Core(cmd) => {
+                let save = saves_settings(&cmd);
+                self.send(cmd);
+                if save {
+                    self.send(UiCommand::SaveSettings);
+                }
+            }
             Msg::ToggleFloating => {
                 if !floating {
                     self.send(UiCommand::SetFloatingExpanded(false));
@@ -309,8 +328,12 @@ impl AcmeApp {
             }
             Msg::ToggleExpanded => self.send(UiCommand::SetFloatingExpanded(!expanded)),
             Msg::ToggleSettings => {
-                if !settings_open && floating && !expanded {
-                    self.send(UiCommand::SetFloatingExpanded(true));
+                if !settings_open {
+                    // 從齒輪 / Ctrl+, 開啟一律回到「一般」分頁頂端。
+                    self.select_settings_tab(SettingsTab::General);
+                    if floating && !expanded {
+                        self.send(UiCommand::SetFloatingExpanded(true));
+                    }
                 }
                 self.send(UiCommand::SetSettingsOpen(!settings_open));
             }
@@ -353,7 +376,7 @@ impl AcmeApp {
                     self.send(UiCommand::ToggleRecording);
                 }
             }
-            Msg::Setting(edit) => self.apply_setting(edit, true),
+            Msg::Setting(edit) => self.apply_setting(edit, true, true),
             Msg::TemplateEditSelect(i) => {
                 self.blur();
                 if let Some(entry) = self.controller.state().template_entries.get(i).cloned() {
@@ -412,12 +435,16 @@ impl AcmeApp {
         self.ui.set_scroll(ScrollId::Settings, 0.0);
     }
 
-    fn apply_setting(&mut self, edit: SettingEdit, reapply: bool) {
+    /// 套用一次設定修改。`reapply`：需要時重新註冊熱鍵；`save`：之後立刻寫檔（即改即存）。
+    fn apply_setting(&mut self, edit: SettingEdit, reapply: bool, save: bool) {
         let mut snapshot = self.controller.state().ui_settings();
         edit.apply(&mut snapshot);
         self.send(UiCommand::UpdateSettings(Box::new(snapshot)));
         if reapply && edit.needs_settings_changed() {
             self.send(UiCommand::SettingsChanged);
+        }
+        if save {
+            self.send(UiCommand::SaveSettings);
         }
     }
 
@@ -444,16 +471,25 @@ impl AcmeApp {
         field.focused = false;
         field.cancel_preedit();
         if matches!(id, FieldId::Hotkey | FieldId::PttHotkey) {
-            // 熱鍵在失去焦點時才重新註冊（避免每打一個字就換一次熱鍵）。
+            // 熱鍵在失去焦點時才重新註冊（避免每打一個字就換一次熱鍵），改過才寫檔。
             self.send(UiCommand::SettingsChanged);
+            if std::mem::take(&mut self.field_dirty) {
+                self.send(UiCommand::SaveSettings);
+            }
         }
     }
 
     fn on_field_edited(&mut self, id: FieldId) {
         let text = self.ui.fields.get(id).text.clone();
         match id {
-            FieldId::Hotkey => self.apply_setting(SettingEdit::Hotkey(text), false),
-            FieldId::PttHotkey => self.apply_setting(SettingEdit::PttHotkey(text), false),
+            FieldId::Hotkey => {
+                self.field_dirty = true;
+                self.apply_setting(SettingEdit::Hotkey(text), false, false);
+            }
+            FieldId::PttHotkey => {
+                self.field_dirty = true;
+                self.apply_setting(SettingEdit::PttHotkey(text), false, false);
+            }
             FieldId::TemplateName | FieldId::TemplatePrompt | FieldId::OpenAiKey => {}
         }
     }
@@ -466,6 +502,14 @@ impl AcmeApp {
         }
     }
 
+    /// 結束滑桿拖曳：拖曳中改過值就寫檔一次。
+    fn finish_slider(&mut self) {
+        self.slider = None;
+        if std::mem::take(&mut self.slider_dirty) {
+            self.send(UiCommand::SaveSettings);
+        }
+    }
+
     fn slide(&mut self, spec: SliderSpec, x: f32) {
         let value = slider_value(x, spec.track_x, spec.track_w, spec.min, spec.max, spec.step);
         let s = self.controller.state();
@@ -474,7 +518,8 @@ impl AcmeApp {
             SliderKind::Temperature => (SettingEdit::Temperature(value), s.temperature),
         };
         if (current - value).abs() > f32::EPSILON {
-            self.apply_setting(edit, true);
+            self.slider_dirty = true;
+            self.apply_setting(edit, true, false);
         }
     }
 
@@ -511,7 +556,7 @@ impl AcmeApp {
                 }
             }
             PointerOutcome::Released { button: 0, .. } | PointerOutcome::Cancelled { .. } => {
-                self.slider = None;
+                self.finish_slider();
                 self.release_hold();
             }
             PointerOutcome::Clicked { id, button: 0, .. } => {
@@ -594,6 +639,17 @@ impl AcmeApp {
         character: Option<&str>,
     ) -> bool {
         if let Some(id) = self.ui.focus {
+            // 快捷鍵欄：按下組合鍵即錄入（Ctrl+A / C / V / X / Z / Y 仍是編輯快捷鍵）。
+            if matches!(id, FieldId::Hotkey | FieldId::PttHotkey) {
+                if let Some(combo) = hotkey_combo(key, ctrl, alt, shift, character.or(text)) {
+                    let field = self.ui.fields.get_mut(id);
+                    if field.text != combo {
+                        super::controls::set_text(field, &combo);
+                        self.on_field_edited(id);
+                    }
+                    return true;
+                }
+            }
             if self.clipboard.is_none() && ctrl {
                 self.clipboard = Clipboard::new().ok();
             }
@@ -620,6 +676,14 @@ impl AcmeApp {
                     return true;
                 }
                 FieldKey::Ignored => {}
+            }
+        }
+        // 視窗內快捷鍵（文字框有焦點時不作用；上面已把按鍵交給文字框）。
+        if !self.ui.text_focused() && ctrl && !alt && !meta && !shift {
+            let ch = character.or(text).and_then(single_char);
+            if let Some(msg) = ch.and_then(|c| window_shortcut(self.controller.state(), c)) {
+                self.dispatch(msg);
+                return true;
             }
         }
         let core_key = match key {
@@ -686,6 +750,41 @@ impl AcmeApp {
     /// 待送出的視窗請求（測試用，不清空）。
     pub fn pending_requests(&self) -> &[WindowRequest] {
         &self.requests
+    }
+}
+
+/// 改到持久化設定（`UiSettings`）的直接指令：送出後要立刻 `SaveSettings`。
+fn saves_settings(cmd: &UiCommand) -> bool {
+    matches!(
+        cmd,
+        UiCommand::SetPrivacyMode(_)
+            | UiCommand::SetClipboardEnabled(_)
+            | UiCommand::SetInjectEnabled(_)
+            | UiCommand::SetDarkMode(_)
+            | UiCommand::UpdateSettings(_)
+    )
+}
+
+fn single_char(s: &str) -> Option<char> {
+    let mut chars = s.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) => Some(c),
+        _ => None,
+    }
+}
+
+/// 視窗內 Ctrl 快捷鍵：`Ctrl+,` 開關設定；設定開啟時 `Ctrl+1..6` 切分頁，
+/// 否則 `Ctrl+1` / `Ctrl+2` 切到即時 / 檔案。
+fn window_shortcut(s: &AppViewState, c: char) -> Option<Msg> {
+    match c {
+        ',' => Some(Msg::ToggleSettings),
+        '1'..='6' if s.settings_open => {
+            let i = c as usize - '1' as usize;
+            Some(Msg::SettingsTab(SettingsTab::ALL[i]))
+        }
+        '1' => Some(Msg::Core(UiCommand::SetFileMode(false))),
+        '2' => Some(Msg::Core(UiCommand::SetFileMode(true))),
+        _ => None,
     }
 }
 
@@ -830,6 +929,7 @@ impl Application for AcmeApp {
             },
             PlatformEvent::FocusChanged { gained: false, .. } => {
                 self.release_hold();
+                self.finish_slider();
                 // 工作列最小化沒有專屬事件：失去焦點時檢查是否被最小化。
                 if self.tray_ok && self.controller.state().minimize_to_tray && self.shown {
                     if let Some(h) = self.hwnd {

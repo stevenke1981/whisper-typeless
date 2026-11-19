@@ -181,6 +181,57 @@ pub fn field_key(
     }
 }
 
+/// 快捷鍵欄「按下組合鍵即錄入」：含 Ctrl / Alt 的組合鍵（或單獨的 F1–F24）轉成
+/// 核心解析的「Ctrl+Alt+Shift+W」格式。只按修飾鍵、方向 / Enter / Tab / Esc 等編輯鍵、
+/// 或單純 Ctrl + A / C / V / X / Z / Y（編輯快捷鍵）時回傳 `None`，交給一般文字框處理。
+pub fn hotkey_combo(
+    key: PlatformKey,
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    character: Option<&str>,
+) -> Option<String> {
+    let name = match key {
+        PlatformKey::Function(n) if (1..=24).contains(&n) => format!("F{n}"),
+        PlatformKey::Space if ctrl || alt => "Space".to_string(),
+        PlatformKey::Other => {
+            if !(ctrl || alt) {
+                return None;
+            }
+            let mut chars = character?.chars();
+            let c = match (chars.next(), chars.next()) {
+                (Some(c), None) => unshift_digit(c),
+                _ => return None,
+            };
+            let c = c.to_ascii_uppercase();
+            if !(c.is_ascii_alphanumeric() || ",-=./;'[]\\`".contains(c)) {
+                return None;
+            }
+            if ctrl && !alt && !shift && "ACVXZY".contains(c) {
+                return None;
+            }
+            c.to_string()
+        }
+        _ => return None,
+    };
+    let mut combo = String::new();
+    for (on, label) in [(ctrl, "Ctrl+"), (alt, "Alt+"), (shift, "Shift+")] {
+        if on {
+            combo.push_str(label);
+        }
+    }
+    combo.push_str(&name);
+    Some(combo)
+}
+
+/// 美式鍵盤 Shift+數字 的符號還原成數字（Ctrl+Shift+1 的邏輯字元是「!」）。
+fn unshift_digit(c: char) -> char {
+    match "!@#$%^&*()".find(c) {
+        Some(i) => b"1234567890"[i] as char,
+        None => c,
+    }
+}
+
 /// 輸入法組字中（空字串 = 組字結束）。
 pub fn ime_preedit(state: &mut TextInputState, text: &str, cursor: Option<(usize, usize)>) {
     if text.is_empty() {
@@ -263,6 +314,40 @@ mod tests {
         }
         assert_eq!(v, 0.4);
         assert_eq!(snap(f32::NAN, 0.0, 1.0, 0.1), 0.0);
+    }
+
+    #[test]
+    fn hotkey_combo_formats_like_core_parser() {
+        let o = PlatformKey::Other;
+        assert_eq!(
+            hotkey_combo(o, true, false, true, Some("w")).as_deref(),
+            Some("Ctrl+Shift+W")
+        );
+        assert_eq!(
+            hotkey_combo(o, true, true, false, Some("l")).as_deref(),
+            Some("Ctrl+Alt+L")
+        );
+        assert_eq!(
+            hotkey_combo(o, true, false, true, Some("!")).as_deref(),
+            Some("Ctrl+Shift+1")
+        );
+        assert_eq!(
+            hotkey_combo(PlatformKey::Function(5), false, false, false, None).as_deref(),
+            Some("F5")
+        );
+        assert_eq!(
+            hotkey_combo(PlatformKey::Space, false, true, false, None).as_deref(),
+            Some("Alt+Space")
+        );
+        // 編輯快捷鍵、沒有修飾鍵的字元、方向鍵與無法解析的字元都交給文字框
+        assert_eq!(hotkey_combo(o, true, false, false, Some("v")), None);
+        assert_eq!(hotkey_combo(o, false, false, true, Some("W")), None);
+        assert_eq!(
+            hotkey_combo(PlatformKey::ArrowLeft, true, false, false, None),
+            None
+        );
+        assert_eq!(hotkey_combo(o, true, false, false, Some("é")), None);
+        assert_eq!(hotkey_combo(o, true, false, false, None), None);
     }
 
     fn focused(text: &str) -> TextInputState {
