@@ -433,6 +433,7 @@ fn privacy_toggle_in_settings() {
         ..AppViewState::default()
     })
     .0;
+    app.ui.settings_tab = SettingsTab::Engine;
     click(
         &mut app,
         560.0,
@@ -470,6 +471,7 @@ fn model_select_in_settings_and_disabled_while_downloading() {
         ..AppViewState::default()
     })
     .0;
+    app.ui.settings_tab = SettingsTab::Models;
     click(
         &mut app,
         560.0,
@@ -488,6 +490,7 @@ fn model_select_in_settings_and_disabled_while_downloading() {
         ..AppViewState::default()
     })
     .0;
+    busy.ui.settings_tab = SettingsTab::Models;
     busy.build_scene(560.0, 680.0, 1.0).unwrap();
     assert!(busy
         .last_tree
@@ -588,6 +591,7 @@ fn slider_press_and_drag_update_settings() {
         ..AppViewState::default()
     })
     .0;
+    app.ui.settings_tab = SettingsTab::Advanced;
     app.build_scene(560.0, 680.0, 1.0).unwrap();
     let spec = app
         .last_tree
@@ -646,6 +650,7 @@ fn stepper_changes_threads_and_reapplies() {
         ..AppViewState::default()
     })
     .0;
+    app.ui.settings_tab = SettingsTab::Advanced;
     click(
         &mut app,
         560.0,
@@ -734,6 +739,7 @@ fn template_editor_new_save_delete() {
         ..AppViewState::default()
     })
     .0;
+    app.ui.settings_tab = SettingsTab::Templates;
     click(&mut app, 560.0, 680.0, is_click(Msg::TemplateEditNew));
     assert_eq!(app.local().fields.template_name.text, "新模板");
     click(&mut app, 560.0, 680.0, |a| {
