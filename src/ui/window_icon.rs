@@ -238,9 +238,15 @@ mod inner {
                 return;
             }
 
-            // Find the app window by title.
-            let title = CString::new("whisper-typeless").unwrap();
-            let hwnd = FindWindowA(std::ptr::null(), title.as_ptr());
+            // The real window title is the versioned APP_NAME. Prefer the own-process
+            // lookup (AcmeUI and Slint both use that title); fall back to FindWindowA.
+            let hwnd = match crate::ui_acme::hwnd::find_own_hwnd(crate::APP_NAME) {
+                Some(h) => h as winapi::shared::windef::HWND,
+                None => {
+                    let title = CString::new(crate::APP_NAME).unwrap_or_default();
+                    FindWindowA(std::ptr::null(), title.as_ptr())
+                }
+            };
             if !hwnd.is_null() {
                 SendMessageA(hwnd, WM_SETICON, ICON_SMALL_ID, hicon as isize);
                 SendMessageA(hwnd, WM_SETICON, ICON_BIG_ID, hicon as isize);
