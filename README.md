@@ -21,6 +21,9 @@ whisper-typeless 把你的語音即時轉成文字，並貼到你正在輸入的
 ### 介面
 
 - 預設介面為 **AcmeUI-Native**（Rust 原生 GUI）：小型浮動視窗，預設以 CPU 軟體渲染（小視窗不需要 GPU）。
+- 主畫面頂端的狀態卡顯示目前狀態（尚未下載模型、下載中、就緒、錄音中、辨識中），並標示開始／停止與按住說話的快捷鍵。
+- 設定分為「一般、辨識、模型、輸出、模板、進階」六頁，變更即自動儲存，不需按儲存。
+- 視窗快捷鍵：`Ctrl+,` 開啟設定，`Ctrl+1` / `Ctrl+2` 切換即時／檔案，設定開啟時 `Ctrl+1`–`Ctrl+6` 切換分頁。
 - 環境變數 `ACME_RENDER_BACKEND` 可覆寫渲染後端：`cpu`、`gpu`、`auto`（不分大小寫）。未設定或留空時使用預設的 `cpu`；設成無法辨識的值時會記錄警告並改用 `auto`。
 - 本版保留舊的 **Slint** 介面作為備援，以 `whisper-typeless.exe --ui slint` 啟動。Slint 介面將於下一版移除。
 
@@ -63,7 +66,7 @@ whisper-typeless 把你的語音即時轉成文字，並貼到你正在輸入的
 
 ### 輸出模式
 
-在設定的「輸出」區塊選擇：
+在設定的「輸出」頁選擇（主畫面下方的「自動貼上」「剪貼簿」也可直接切換）：
 
 - 只寫入剪貼簿
 - 只注入焦點視窗（自動 Ctrl+V）
@@ -73,7 +76,7 @@ whisper-typeless 把你的語音即時轉成文字，並貼到你正在輸入的
 
 ### 隱私模式
 
-在設定的「輸出」區塊開啟「隱私模式」，或在設定檔中寫入：
+在設定的「辨識」頁開啟「隱私模式」，或在設定檔中寫入：
 
 ```toml
 [output]
@@ -91,7 +94,7 @@ privacy_mode = true
 
 預設只用本機 whisper，語音不離開電腦。若想改用 OpenAI 的即時轉錄（Realtime API）：
 
-1. 開啟設定的「雲端轉錄」區段，引擎選「OpenAI 雲端」。
+1. 開啟設定的「辨識」頁，引擎選「OpenAI 雲端」。
 2. 勾選同意：錄音期間麥克風音訊會即時傳送到 OpenAI。
 3. 輸入 API 金鑰後按「儲存」。金鑰以 Windows DPAPI 加密存在 `%APPDATA%\whisper-typeless\openai.key`，不會寫入 `config.toml` 或日誌；也可改用環境變數 `OPENAI_API_KEY`。
 4. 模型可選 `gpt-live-transcribe`（預設，邊說邊出字）或 `gpt-transcribe`。
@@ -100,7 +103,7 @@ privacy_mode = true
 
 ### 系統匣
 
-程式會在系統匣顯示圖示（錄音中變紅）。左鍵點一下顯示／隱藏主視窗；右鍵選單有「顯示主視窗」「開始／停止錄音」「設定」「結束」。預設按下關閉鈕會縮小到系統匣而不是結束，要結束請用右鍵選單的「結束」。可在設定的「系統匣」區段調整：關閉時縮小、最小化時縮小、啟動時縮小到系統匣。
+程式會在系統匣顯示圖示（錄音中變紅）。左鍵點一下顯示／隱藏主視窗；右鍵選單有「顯示主視窗」「開始／停止錄音」「設定」「結束」。預設按下關閉鈕會縮小到系統匣而不是結束，要結束請用右鍵選單的「結束」。可在設定的「一般」頁調整：關閉時縮小、最小化時縮小、啟動時縮小到系統匣。
 
 ### 情境模板
 
@@ -168,7 +171,7 @@ remove_fillers = ["嗯", "啊", "那個"]
 應用內下載會依 `model-catalog.json` 的校驗值（SHA-1 或 SHA-256）驗證檔案，並自動改用備用來源。若仍失敗，可在專案目錄執行 `.\scripts\download-model.ps1`，或從 [Hugging Face 的 whisper.cpp 模型頁面](https://huggingface.co/ggerganov/whisper.cpp) 手動下載 `ggml-*.bin`，放入執行檔旁的 `models\` 資料夾後重新啟動。
 
 **辨識結果沒有貼到目標視窗**
-- 確認設定的輸出模式包含「注入焦點視窗」。
+- 確認「自動貼上」已開啟（主畫面下方，或設定的「輸出」頁）。
 - 確認游標仍在目標輸入框內；注入發生在辨識完成時。
 - 目標視窗若以系統管理員身分執行，本程式需要以相同權限執行才能注入。
 
@@ -179,7 +182,7 @@ remove_fillers = ["嗯", "啊", "那個"]
 調整設定中的 VAD 閾值與靜音超時。
 
 **想看詳細記錄**
-以原始碼執行時可設定 `RUST_LOG=whisper_typeless=debug`（`cargo run`）。Release 版隱藏主控台，請改看介面上的錯誤紀錄（⚠ 按鈕）。
+以原始碼執行時可設定 `RUST_LOG=whisper_typeless=debug`（`cargo run`）。Release 版隱藏主控台，請改看介面上的錯誤紀錄（主畫面下方的錯誤標記，或設定的「進階」頁 › 錯誤紀錄）。
 
 ### 從原始碼建置
 
@@ -239,7 +242,7 @@ cargo build --release --no-default-features --target x86_64-pc-windows-msvc
 - **System tray**: closing the window hides it to the tray by default; left-click the tray icon to show/hide, right-click for record/settings/quit.
 - **Chinese-first**: Simplified output from Whisper is converted to Traditional Chinese (zh-TW) by default (OpenCC). zh-HK, zh-CN and raw modes are also available.
 - **Context templates**: built-in templates for meetings, casual talk, technical discussion, medical and legal use. Override or add templates with TOML files.
-- **Keyboard-first floating UI** built with AcmeUI-Native (Rust-native, CPU software rendering by default), optional always-on-top, light and dark themes. The previous Slint UI stays available as a fallback via `--ui slint` for this release.
+- **Keyboard-first UI** built with AcmeUI-Native (Rust-native, CPU software rendering by default): a status card shows the current state and hotkeys, settings are split into six tabs that save automatically, and `Ctrl+,` opens settings, `Ctrl+1` / `Ctrl+2` switch live / file, `Ctrl+1`–`Ctrl+6` switch settings tabs. Optional always-on-top, light and dark themes. The previous Slint UI stays available as a fallback via `--ui slint` for this release.
 - **Privacy mode** skips saving WAV files and clears the clipboard after output.
 - **Single small exe**; CUDA acceleration is optional and built from source.
 

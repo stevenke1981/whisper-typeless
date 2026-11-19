@@ -230,6 +230,7 @@ impl AppViewState {
         self.close_to_tray = s.close_to_tray;
         self.minimize_to_tray = s.minimize_to_tray;
         self.start_minimized = s.start_minimized;
+        self.dark_mode = s.dark_mode;
     }
 
     /// 從狀態讀出設定快照（等同舊版 `ui_settings_from_window`）。
@@ -261,6 +262,7 @@ impl AppViewState {
             close_to_tray: self.close_to_tray,
             minimize_to_tray: self.minimize_to_tray,
             start_minimized: self.start_minimized,
+            dark_mode: self.dark_mode,
         }
     }
 
@@ -310,9 +312,11 @@ mod tests {
             close_to_tray: false,
             minimize_to_tray: true,
             start_minimized: true,
+            dark_mode: true,
             ..UiSettings::default()
         };
         let state = AppViewState::from_settings(&s);
+        assert!(state.dark_mode);
         assert_eq!(state.ui_settings(), s);
     }
 

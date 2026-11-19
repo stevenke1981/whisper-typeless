@@ -1,7 +1,7 @@
 //! 只屬於畫面層、不進核心的狀態（捲動位置、文字框焦點、模板編輯選取、置頂…）。
 
 use super::controls::{set_text, Fields};
-use super::msg::{FieldId, ScrollId};
+use super::msg::{FieldId, ScrollId, SettingsTab};
 use crate::core::{AppViewState, TemplateEntryView};
 
 /// 正在編輯的模板。
@@ -29,6 +29,8 @@ pub struct UiLocal {
     pub template_edit: Option<TemplateEdit>,
     /// 動畫影格（錄音中的脈動）。
     pub anim: u32,
+    /// 設定目前的分頁。
+    pub settings_tab: SettingsTab,
 }
 
 impl Default for UiLocal {
@@ -41,6 +43,7 @@ impl Default for UiLocal {
             fields: Fields::new(),
             template_edit: None,
             anim: 0,
+            settings_tab: SettingsTab::General,
         }
     }
 }

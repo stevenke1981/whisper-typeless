@@ -14,6 +14,7 @@
 pub mod app;
 pub mod controls;
 pub mod hwnd;
+pub mod icons;
 pub mod local;
 pub mod msg;
 pub mod paint;

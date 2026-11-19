@@ -160,6 +160,31 @@ impl Controller {
         params
     }
 
+    /// 錄音用參數：選了情境模板（非「自動」）時，以該模板的提示詞作為 initial_prompt
+    /// （本機 whisper 與 OpenAI 雲端都會使用）。
+    fn recording_whisper_params(&self) -> WhisperParams {
+        let mut params = self.whisper_params();
+        if let Some(prompt) = self.selected_template_prompt() {
+            params.initial_prompt = Some(prompt);
+        }
+        params
+    }
+
+    fn selected_template_prompt(&self) -> Option<String> {
+        let id = self.state.current_template.trim();
+        if id.is_empty() || id == "auto" {
+            return None;
+        }
+        let tid = crate::context_templates::TemplateId::from_stable_id(id);
+        let name = tid.display_name();
+        self.state
+            .template_entries
+            .iter()
+            .find(|e| e.name == name || e.name == id)
+            .map(|e| e.prompt.trim().to_string())
+            .filter(|p| !p.is_empty())
+    }
+
     /// 處理使用者操作；回傳需要畫面層執行的動作。
     pub fn handle(&mut self, cmd: UiCommand) -> Vec<ViewRequest> {
         let s = &mut self.state;
@@ -434,7 +459,7 @@ impl Controller {
             inject_enabled: self.state.inject_enabled,
             opencc_enabled: self.state.mod_opencc,
             conversion_mode: self.state.conversion_mode.clone(),
-            whisper_params: self.whisper_params(),
+            whisper_params: self.recording_whisper_params(),
             // 隱私：未經同意或開啟隱私模式時一律本機轉錄
             engine: if self.state.openai_consent && !self.state.privacy_mode {
                 TranscriptionEngine::from_str_lossy(&self.state.engine)

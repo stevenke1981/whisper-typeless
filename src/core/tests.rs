@@ -819,3 +819,42 @@ fn tray_toggle_recording_keeps_window_state() {
     c.apply(CoreEvent::Tray(TrayAction::ToggleRecording));
     assert!(!c.state().is_recording);
 }
+
+#[test]
+fn selected_template_prompt_reaches_recording_params() {
+    use crate::core::state::TemplateEntryView;
+    let (mut c, fake) = controller();
+    c.state_mut().template_entries = vec![
+        TemplateEntryView {
+            name: "會議記錄".into(),
+            prompt: "以下是會議記錄。".into(),
+            is_builtin: true,
+        },
+        TemplateEntryView {
+            name: "我的模板".into(),
+            prompt: "自訂提示".into(),
+            is_builtin: false,
+        },
+    ];
+    let prompts = |fake: &FakeBackend| -> Vec<Option<String>> {
+        fake.calls()
+            .into_iter()
+            .filter_map(|call| match call {
+                Call::StartRecording(req) => Some(req.whisper_params.initial_prompt),
+                _ => None,
+            })
+            .collect()
+    };
+    c.handle(UiCommand::TemplateSelected("meeting".into()));
+    c.handle(UiCommand::ToggleRecording);
+    c.handle(UiCommand::ToggleRecording);
+    c.handle(UiCommand::TemplateSelected("我的模板".into()));
+    c.handle(UiCommand::ToggleRecording);
+    c.handle(UiCommand::ToggleRecording);
+    c.handle(UiCommand::TemplateSelected("auto".into()));
+    c.handle(UiCommand::ToggleRecording);
+    let p = prompts(&fake);
+    assert_eq!(p[0].as_deref(), Some("以下是會議記錄。"));
+    assert_eq!(p[1].as_deref(), Some("自訂提示"));
+    assert_eq!(p[2], c.whisper_params().initial_prompt);
+}

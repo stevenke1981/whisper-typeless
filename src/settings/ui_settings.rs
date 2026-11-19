@@ -58,6 +58,10 @@ pub struct UiSettings {
     pub close_to_tray: bool,
     pub minimize_to_tray: bool,
     pub start_minimized: bool,
+
+    // Appearance（[general] theme）
+    /// 深色模式；`general.theme == "dark"` 時為真。
+    pub dark_mode: bool,
 }
 
 impl Default for UiSettings {
@@ -98,6 +102,7 @@ impl UiSettings {
             close_to_tray: config.general.close_to_tray,
             minimize_to_tray: config.general.minimize_to_tray,
             start_minimized: config.general.start_minimized,
+            dark_mode: config.general.theme == "dark",
         }
     }
 
@@ -134,6 +139,12 @@ impl UiSettings {
         config.general.close_to_tray = self.close_to_tray;
         config.general.minimize_to_tray = self.minimize_to_tray;
         config.general.start_minimized = self.start_minimized;
+        // 深色 → "dark"；淺色只改寫原本的 "dark"，其餘（例如 "auto"）保留。
+        if self.dark_mode {
+            config.general.theme = "dark".into();
+        } else if config.general.theme == "dark" {
+            config.general.theme = "light".into();
+        }
     }
 }
 
@@ -217,6 +228,7 @@ mod tests {
             close_to_tray: false,
             minimize_to_tray: true,
             start_minimized: true,
+            dark_mode: true,
         }
     }
 
@@ -347,6 +359,30 @@ mod tests {
         assert_eq!(s.engine, "local");
         assert!(!s.openai_consent);
         assert!(s.close_to_tray);
+    }
+
+    #[test]
+    fn dark_mode_round_trips_and_keeps_auto() {
+        let mut cfg = AppConfig::default();
+        assert_eq!(cfg.general.theme, "auto");
+        let light = UiSettings::from_config(&cfg);
+        assert!(!light.dark_mode);
+        light.apply_to(&mut cfg);
+        assert_eq!(cfg.general.theme, "auto", "淺色時不改寫 auto");
+
+        let dark = UiSettings {
+            dark_mode: true,
+            ..light.clone()
+        };
+        dark.apply_to(&mut cfg);
+        assert_eq!(cfg.general.theme, "dark");
+        let text = toml::to_string_pretty(&cfg).unwrap();
+        let reloaded: AppConfig = toml::from_str(&text).unwrap();
+        assert!(UiSettings::from_config(&reloaded).dark_mode);
+
+        light.apply_to(&mut cfg);
+        assert_eq!(cfg.general.theme, "light");
+        assert!(!UiSettings::from_config(&cfg).dark_mode);
     }
 
     #[test]
