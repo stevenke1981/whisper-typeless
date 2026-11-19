@@ -14,19 +14,19 @@ fn main() -> Result<()> {
         }
     };
 
-    if command != cli::Command::RunGui {
+    let cli::Command::RunGui(gui) = command else {
         cli::attach_parent_console();
         let code = cli::run_headless(command).unwrap_or(0);
         std::process::exit(code);
-    }
+    };
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
-        .block_on(run_gui())
+        .block_on(run_gui(gui))
 }
 
-async fn run_gui() -> Result<()> {
+async fn run_gui(gui: cli::Gui) -> Result<()> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
             std::env::var("RUST_LOG").unwrap_or_else(|_| {
@@ -40,13 +40,17 @@ async fn run_gui() -> Result<()> {
         .init();
 
     tracing::info!(
-        "{} 啟動中 (target: {})",
+        "{} 啟動中 (target: {}, ui: {:?})",
         whisper_typeless::APP_NAME,
         std::env::consts::ARCH,
+        gui,
     );
 
     let app_state = whisper_typeless::app::AppState::new().await?;
-    whisper_typeless::ui::run(app_state).await?;
+    match gui {
+        cli::Gui::Acme => whisper_typeless::ui_acme::run(app_state).await?,
+        cli::Gui::Slint => whisper_typeless::ui::run(app_state).await?,
+    }
 
     Ok(())
 }

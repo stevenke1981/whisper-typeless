@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-pub(super) fn save_recording_wav(samples: &[f32], sample_rate: u32) -> anyhow::Result<PathBuf> {
+pub(crate) fn save_recording_wav(samples: &[f32], sample_rate: u32) -> anyhow::Result<PathBuf> {
     use std::io::Write;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -41,7 +41,7 @@ pub(super) fn save_recording_wav(samples: &[f32], sample_rate: u32) -> anyhow::R
     Ok(path)
 }
 
-pub(super) fn current_time_str() -> String {
+pub(crate) fn current_time_str() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -53,4 +53,17 @@ pub(super) fn current_time_str() -> String {
     // 轉換為 UTC+8（台灣時間）
     let h_tw = (h + 8) % 24;
     format!("{:02}:{:02}:{:02}", h_tw, m, s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn time_str_is_hh_mm_ss() {
+        let t = current_time_str();
+        assert_eq!(t.len(), 8);
+        assert_eq!(&t[2..3], ":");
+        assert_eq!(&t[5..6], ":");
+    }
 }

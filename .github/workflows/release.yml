@@ -18,6 +18,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          # 快取需綁定 runner 映像版本：whisper-rs-sys 的 CMake 快取記錄 MSVC 絕對路徑，映像更新後會失效
+          key: img-${{ env.ImageVersion }}
       - name: Set LIBCLANG_PATH
         shell: pwsh
         run: |
@@ -70,7 +73,8 @@ jobs:
           $zip = Join-Path $PWD "dist/$name.zip"
           Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          "$hash  $name.zip" | Out-File -FilePath dist/SHA256SUMS.txt -Encoding ascii
+          # LF 結尾，讓 Linux/macOS 的 `sha256sum -c` 也能直接驗證
+          [IO.File]::WriteAllText((Join-Path $PWD 'dist/SHA256SUMS.txt'), "$hash  $name.zip`n")
           "zip=dist/$name.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Upload artifacts

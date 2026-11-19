@@ -18,6 +18,12 @@ whisper-typeless 把你的語音即時轉成文字，並貼到你正在輸入的
 - **中文優先**：預設將 Whisper 的簡體輸出轉為台灣繁體（zh-TW）。
 - **單一執行檔**：主程式是一個 exe，模型檔另外放置；CUDA 加速為選用。
 
+### 介面
+
+- 預設介面為 **AcmeUI-Native**（Rust 原生 GUI）：小型浮動視窗，預設以 CPU 軟體渲染（小視窗不需要 GPU）。
+- 環境變數 `ACME_RENDER_BACKEND` 可覆寫渲染後端：`cpu`、`gpu`、`auto`（不分大小寫）。未設定或留空時使用預設的 `cpu`；設成無法辨識的值時會記錄警告並改用 `auto`。
+- 本版保留舊的 **Slint** 介面作為備援，以 `whisper-typeless.exe --ui slint` 啟動。Slint 介面將於下一版移除。
+
 ### 核心功能
 
 - **離線辨識**：使用 Whisper 模型（whisper.cpp），可在設定中選擇模型大小。
@@ -35,7 +41,7 @@ whisper-typeless 把你的語音即時轉成文字，並貼到你正在輸入的
 3. 若啟動時出現缺少 `VCRUNTIME140.dll` 或 `MSVCP140.dll` 的錯誤，請安裝 [Microsoft Visual C++ Redistributable（x64）](https://aka.ms/vs/17/release/vc_redist.x64.exe)。
 4. 執行 `whisper-typeless.exe`。
 
-系統需求：Windows 10/11（64 位元）、一個麥克風。Release 版為 CPU 版本；需要 NVIDIA CUDA 加速時，請從原始碼建置（見下方）。
+系統需求：Windows 10/11（64 位元）、一個麥克風。Release zip 只含 CPU 版本（不需要 CUDA 執行時）；需要 NVIDIA CUDA 加速時，請從原始碼建置（見下方）。
 
 ### 首次啟動與模型下載
 
@@ -113,6 +119,8 @@ remove_fillers = ["嗯", "啊", "那個"]
 
 | 參數 | 說明 |
 |------|------|
+| （無參數） | 啟動 AcmeUI 介面（預設） |
+| `--ui acme` / `--ui slint` | 指定介面：`acme`（預設）或 `slint`（本版保留的備援）；`--acme-shell` 為 `--ui acme` 的舊別名 |
 | `--version` | 顯示版本後結束 |
 | `--help` | 顯示用法後結束 |
 | `--config-path` | 印出設定檔路徑後結束 |
@@ -137,6 +145,9 @@ remove_fillers = ["嗯", "啊", "那個"]
 
 **啟動時出現 VCRUNTIME140.dll 或 MSVCP140.dll 錯誤**
 安裝 [Microsoft Visual C++ Redistributable（x64）](https://aka.ms/vs/17/release/vc_redist.x64.exe)。
+
+**啟動後沒有視窗，或出現找不到 `cudart64_12.dll` 的錯誤**
+這是 CUDA 建置缺少 NVIDIA CUDA runtime。可擇一處理：改用 Releases 的 CPU 版 zip（檔名含 `-cpu`）；或安裝 CUDA Toolkit 12.x。
 
 **模型下載失敗或校驗失敗**
 應用內下載會依 `model-catalog.json` 的校驗值（SHA-1 或 SHA-256）驗證檔案，並自動改用備用來源。若仍失敗，可在專案目錄執行 `.\scripts\download-model.ps1`，或從 [Hugging Face 的 whisper.cpp 模型頁面](https://huggingface.co/ggerganov/whisper.cpp) 手動下載 `ggml-*.bin`，放入執行檔旁的 `models\` 資料夾後重新啟動。
@@ -175,6 +186,8 @@ remove_fillers = ["嗯", "啊", "那個"]
 .\scripts\dev.ps1 build -Cuda  # 加入 CUDA 支援（需要 CUDA Toolkit）
 ```
 
+AcmeUI-Native 相依套件以固定 git rev 引用 `github.com/stevenke1981/AcmeUI-Native`，首次建置需要能連到 GitHub。
+
 直接使用 cargo：
 
 ```powershell
@@ -209,18 +222,18 @@ cargo build --release --no-default-features --target x86_64-pc-windows-msvc
 - **Local-only**: audio and text never leave your machine. The only network access is model download.
 - **Chinese-first**: Simplified output from Whisper is converted to Traditional Chinese (zh-TW) by default (OpenCC). zh-HK, zh-CN and raw modes are also available.
 - **Context templates**: built-in templates for meetings, casual talk, technical discussion, medical and legal use. Override or add templates with TOML files.
-- **Keyboard-first floating UI**, optional always-on-top, light and dark themes.
+- **Keyboard-first floating UI** built with AcmeUI-Native (Rust-native, CPU software rendering by default), optional always-on-top, light and dark themes. The previous Slint UI stays available as a fallback via `--ui slint` for this release.
 - **Privacy mode** skips saving WAV files and clears the clipboard after output.
 - **Single small exe**; CUDA acceleration is optional and built from source.
 
-**Install:** download `whisper-typeless-vX.Y.Z-windows-x86_64-cpu.zip` from [GitHub Releases](https://github.com/stevenke1981/whisper-typeless/releases), unzip, and install the [Visual C++ Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe) if you see missing VCRUNTIME140.dll or MSVCP140.dll errors.
+**Install:** download `whisper-typeless-vX.Y.Z-windows-x86_64-cpu.zip` from [GitHub Releases](https://github.com/stevenke1981/whisper-typeless/releases), unzip, and install the [Visual C++ Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe) if you see missing VCRUNTIME140.dll or MSVCP140.dll errors. The release zip is CPU-only; if the window does not appear and you see a missing `cudart64_12.dll` error, you are running a CUDA build without the NVIDIA CUDA runtime. Use the CPU zip, or install CUDA Toolkit 12.
 
-**First run:** pick a model when prompted. Models are downloaded on demand into the `models` folder next to the exe. Known issue: in-app download checksum verification is currently broken; see the troubleshooting section for a workaround.
+**First run:** pick a model when prompted. Models are downloaded on demand into the `models` folder next to the exe. Downloads are verified against the catalog checksum (SHA-1 or SHA-256).
 
 **Hotkeys (defaults):** `Ctrl+Shift+W` toggles recording (global, Windows only); `Ctrl+Alt+L` is push-to-talk; `Esc` closes panels or collapses the floating window.
 
-**Config:** `%APPDATA%\whisper-typeless\config.toml` (run `whisper-typeless.exe --config-path` to confirm). CLI flags: `--version`, `--help`, `--config-path`, `--self-check`.
+**Config:** `%APPDATA%\whisper-typeless\config.toml` (run `whisper-typeless.exe --config-path` to confirm). CLI flags: `--version`, `--help`, `--config-path`, `--self-check`, `--ui acme|slint` (default `acme`). The AcmeUI renderer defaults to CPU; override with `ACME_RENDER_BACKEND=cpu|gpu|auto`.
 
-**Build from source:** Rust (MSVC toolchain), Visual Studio Build Tools, CMake and libclang (set `LIBCLANG_PATH`). Run `.\scripts\dev.ps1 build` for CPU, or `.\scripts\dev.ps1 build -Cuda` with the CUDA Toolkit. See the Chinese section for raw cargo commands.
+**Build from source:** Rust (MSVC toolchain), Visual Studio Build Tools, CMake and libclang (set `LIBCLANG_PATH`). Run `.\scripts\dev.ps1 build` for CPU, or `.\scripts\dev.ps1 build -Cuda` with the CUDA Toolkit. AcmeUI-Native dependencies are fetched from GitHub at a pinned revision, so the first build needs network access. See the Chinese section for raw cargo commands.
 
 **License:** MIT. See [LICENSE](LICENSE).

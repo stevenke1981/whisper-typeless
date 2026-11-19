@@ -8,12 +8,14 @@ pub mod app;
 pub mod audio;
 pub mod cli;
 pub mod context_templates;
+pub mod core;
 pub mod file_transcription;
 pub mod models;
 pub mod output;
 pub mod settings;
 pub mod transcription;
 pub mod ui;
+pub mod ui_acme;
 pub mod whisper;
 
 slint::include_modules!();

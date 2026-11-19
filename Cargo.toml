@@ -1,6 +1,6 @@
 [package]
 name = "whisper-typeless"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "Real-time speech-to-text with auto-inject, powered by whisper.cpp"
 license = "MIT"
@@ -64,6 +64,15 @@ rfd = "0.15"
 dirs = "5"
 futures = "0.3"
 bytes = "1"
+
+# AcmeUI-Native GUI (default; --ui slint keeps the Slint UI), pinned to a fixed upstream revision
+acme-core = { git = "https://github.com/stevenke1981/AcmeUI-Native", rev = "c2e0fd9765d0f25119a240ad1adb378c045df63f" }
+acme-platform = { git = "https://github.com/stevenke1981/AcmeUI-Native", rev = "c2e0fd9765d0f25119a240ad1adb378c045df63f" }
+acme-text = { git = "https://github.com/stevenke1981/AcmeUI-Native", rev = "c2e0fd9765d0f25119a240ad1adb378c045df63f" }
+acme-textinput = { git = "https://github.com/stevenke1981/AcmeUI-Native", rev = "c2e0fd9765d0f25119a240ad1adb378c045df63f" }
+
+[dev-dependencies]
+acme-render-cpu = { git = "https://github.com/stevenke1981/AcmeUI-Native", rev = "c2e0fd9765d0f25119a240ad1adb378c045df63f" }
 
 [build-dependencies]
 slint-build = "1.7"

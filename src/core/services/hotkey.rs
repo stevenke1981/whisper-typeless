@@ -3,8 +3,8 @@
 // 提供 WM_HOTKEY 式的全域快捷鍵，使用 winapi RegisterHotKey + PeekMessageA
 // 訊息迴圈監聽切換錄音的快捷鍵，支援執行中動態更換按鍵組合。
 
-use crate::AppWindow;
-use slint::ComponentHandle;
+use crate::core::event::CoreEvent;
+use crate::core::Notifier;
 use tracing::info;
 
 /// 解析 Windows 虛擬按鍵碼（VK_*）
@@ -90,13 +90,13 @@ pub fn parse_global_hotkey(s: &str) -> (u32, u32) {
 
 /// 啟動全域快捷鍵監聽執行緒（RegisterHotKey + PeekMessageA）
 ///
+/// 按下時送出 `CoreEvent::HotkeyPressed`（不會碰視窗焦點）。
 /// 回傳 `Sender<String>`，送出新的快捷鍵字串可執行中動態更換。
-pub fn setup_global_hotkey(
-    ui: &AppWindow,
+pub fn spawn_global_hotkey(
     initial_hotkey: String,
+    notifier: Notifier,
 ) -> std::sync::mpsc::Sender<String> {
     let (tx, rx) = std::sync::mpsc::channel::<String>();
-    let ui_weak = ui.as_weak();
 
     #[cfg(windows)]
     {
@@ -126,12 +126,7 @@ pub fn setup_global_hotkey(
                     && msg.message == WM_HOTKEY
                     && msg.wParam as i32 == HOTKEY_ID
                 {
-                    let u = ui_weak.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = u.upgrade() {
-                            ui.invoke_toggle_recording();
-                        }
-                    });
+                    notifier.send(CoreEvent::HotkeyPressed);
                 }
 
                 std::thread::sleep(Duration::from_millis(10));
@@ -141,9 +136,35 @@ pub fn setup_global_hotkey(
 
     #[cfg(not(windows))]
     {
-        let _ = ui_weak;
+        let _ = (rx, notifier);
         info!("全域快捷鍵僅支援 Windows（設定: {}）", initial_hotkey);
     }
 
     tx
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use winapi::um::winuser::{MOD_ALT, MOD_CONTROL, MOD_SHIFT, VK_F5, VK_SPACE};
+
+    #[test]
+    fn parses_default_hotkeys() {
+        assert_eq!(
+            parse_global_hotkey("Ctrl+Shift+W"),
+            ((MOD_CONTROL | MOD_SHIFT) as u32, 'W' as u32)
+        );
+        assert_eq!(
+            parse_global_hotkey("ctrl + alt + l"),
+            ((MOD_CONTROL | MOD_ALT) as u32, 'L' as u32)
+        );
+    }
+
+    #[test]
+    fn parses_named_keys_and_falls_back() {
+        assert_eq!(parse_windows_vkey("F5", 0), VK_F5 as u32);
+        assert_eq!(parse_windows_vkey("space", 0), VK_SPACE as u32);
+        assert_eq!(parse_windows_vkey("???", 42), 42);
+        assert_eq!(parse_windows_vkey("", 7), 7);
+    }
 }
