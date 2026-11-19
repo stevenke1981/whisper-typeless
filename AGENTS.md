@@ -63,6 +63,17 @@ cargo clippy --all-targets --target x86_64-pc-windows-msvc --no-default-features
 
 **無 GUI 的快速驗證**：`whisper-typeless.exe --self-check`（模型清單、範本、設定檔、OpenCC），結束碼 0 表示通過。
 
+## UI 快照（無視窗）
+
+設計 / 實作者可不開視窗檢視 AcmeUI 畫面。測試 `ui_snapshots`（`src/ui_acme/snapshots.rs`，預設 `#[ignore]`）以與正式視窗相同的 view 函式與字型，用 CPU 渲染器把浮動列、即時 / 檔案 / 設定（逐段捲動）/ 模板編輯 / 錯誤紀錄 / 深色等畫面存成 PNG（1.5x 與 1.0x；內建 PNG 編碼器，無新增相依）：
+
+```powershell
+$env:SNAPSHOT_DIR = "C:/tmp/snaps"
+cargo test --no-default-features --target x86_64-pc-windows-msvc --lib ui_snapshots -- --ignored
+```
+
+輸出檔名如 `01_overlay_idle@1.5x.png`，清單在 `index.txt`。
+
 ## 模組地圖
 
 - `src/main.rs`：入口；安裝 tracing（含錯誤紀錄 layer），解析 CLI，無參數時啟動預設 GUI（AcmeUI）。

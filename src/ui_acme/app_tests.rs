@@ -12,7 +12,7 @@ use crate::whisper::WhisperParams;
 use acme_render_cpu::CpuRenderer;
 
 #[derive(Default)]
-struct FakeBackend {
+pub(super) struct FakeBackend {
     recording: bool,
 }
 
@@ -54,7 +54,7 @@ impl Backend for FakeBackend {
     }
 }
 
-fn app_with(state: AppViewState) -> (AcmeApp, Notifier) {
+pub(super) fn app_with(state: AppViewState) -> (AcmeApp, Notifier) {
     let (notifier, queue) = event_channel(|| {});
     let controller = Controller::new(state, AppConfig::default(), Box::<FakeBackend>::default());
     let slot: WakerSlot = Arc::new(Mutex::new(None));
@@ -65,7 +65,7 @@ fn app() -> AcmeApp {
     app_with(AppViewState::default()).0
 }
 
-fn models() -> Vec<ModelEntryView> {
+pub(super) fn models() -> Vec<ModelEntryView> {
     vec![
         ModelEntryView {
             id: "small".into(),
@@ -95,7 +95,7 @@ fn models() -> Vec<ModelEntryView> {
     ]
 }
 
-fn templates() -> Vec<TemplateEntryView> {
+pub(super) fn templates() -> Vec<TemplateEntryView> {
     vec![
         TemplateEntryView {
             name: "會議".into(),

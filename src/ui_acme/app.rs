@@ -858,3 +858,7 @@ impl Application for AcmeApp {
 #[cfg(test)]
 #[path = "app_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "snapshots.rs"]
+mod snapshots;
