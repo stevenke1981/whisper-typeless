@@ -1,6 +1,6 @@
 [package]
 name = "whisper-typeless"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Real-time speech-to-text with auto-inject, powered by whisper.cpp"
 license = "MIT"
@@ -72,7 +72,7 @@ winapi = { version = "0.3", features = ["winuser", "processthreadsapi", "wingdi"
 raw-window-handle = "0.6"
 
 [features]
-default = ["cuda"]
+default = []
 cuda    = ["whisper-rs/cuda"]
 metal   = ["whisper-rs/metal"]
 
