@@ -91,10 +91,10 @@ cargo test --no-default-features --target x86_64-pc-windows-msvc --lib ui_snapsh
   - `tests.rs`：核心單元測試（假 Backend）。
 - `src/ui_acme/`：預設畫面層（AcmeUI-Native），只是核心的薄轉接層。
   - `app.rs`：`AcmeApp`（`acme_platform::Application`），擁有 `Controller`，把指標 / 鍵盤 / 輸入法事件轉成 `UiCommand`；`render_backend()` 回傳 `Cpu`（可由環境變數 `ACME_RENDER_BACKEND` 覆寫）。`app_tests.rs` 為對應測試。
-  - `views/`：`AppViewState` → 描述樹的純函式（`live.rs` 緊湊 / 即時、`file.rs` 檔案模式、`settings.rs` 設定、`overlay.rs` 錯誤紀錄浮層、`widgets.rs` 共用元件）。
+  - `views/`：`AppViewState` → 描述樹的純函式（`live.rs` 緊湊 / 即時、`file.rs` 檔案模式、`settings.rs` 設定、`overlay.rs` 錯誤紀錄浮層、`onboarding.rs` 缺模型 / 下載中狀態卡、`widgets.rs` 共用元件與 v0.6 tokens；`mod.rs` 另有 `Phase` / `phase` / `cloud_ready` / `needs_model`）。
   - `paint.rs`：描述樹 → `Painter` 指令與 `HitTestLayer` 命中區域（`HitMap`）。
   - `controls.rs`：滑桿 / 步進器數學、acme-textinput 文字框（含輸入法組字）。
-  - `theme.rs`：色票（取自 `ui/styles/tokens.slint`）；`text.rs`：zh-TW 文字塑形、換行、省略號。
+  - `theme.rs`：色票（取自 `ui/styles/tokens.slint`）與 `Tone` / `Theme::tone`；`icons.rs`：單色向量圖示（`Icon`、`icon`）；`text.rs`：zh-TW 文字塑形、換行、省略號。
   - `local.rs`：只屬於畫面層的狀態（捲動、焦點、選取）；`msg.rs`：命中區域送出的 `Msg`。
   - `hwnd.rs`：Win32 縮放 / 置頂，一律 `SWP_NOACTIVATE`。
 - `src/ui/`：Slint 備援轉接層（`--ui slint`，本版保留，下一版移除）。

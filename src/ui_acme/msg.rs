@@ -41,6 +41,62 @@ impl ScrollId {
     }
 }
 
+/// 設定的分頁（由左到右）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum SettingsTab {
+    #[default]
+    General,
+    Engine,
+    Models,
+    Output,
+    Templates,
+    Advanced,
+}
+
+impl SettingsTab {
+    pub const ALL: [SettingsTab; 6] = [
+        SettingsTab::General,
+        SettingsTab::Engine,
+        SettingsTab::Models,
+        SettingsTab::Output,
+        SettingsTab::Templates,
+        SettingsTab::Advanced,
+    ];
+
+    /// 分頁標籤（zh-TW）。
+    pub fn label(self) -> &'static str {
+        match self {
+            SettingsTab::General => "一般",
+            SettingsTab::Engine => "辨識",
+            SettingsTab::Models => "模型",
+            SettingsTab::Output => "輸出",
+            SettingsTab::Templates => "模板",
+            SettingsTab::Advanced => "進階",
+        }
+    }
+
+    /// 在 [`SettingsTab::ALL`] 中的位置（0 起算；`Ctrl+1..6` 用）。
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|t| *t == self).unwrap_or(0)
+    }
+
+    /// 穩定的字串 id（分段控制項用）。
+    pub fn id(self) -> &'static str {
+        match self {
+            SettingsTab::General => "general",
+            SettingsTab::Engine => "engine",
+            SettingsTab::Models => "models",
+            SettingsTab::Output => "output",
+            SettingsTab::Templates => "templates",
+            SettingsTab::Advanced => "advanced",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<SettingsTab> {
+        Self::ALL.into_iter().find(|t| t.id() == id)
+    }
+}
+
 /// 滑桿控制的設定值。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SliderKind {
@@ -77,6 +133,14 @@ pub enum SettingEdit {
     /// 同意把語音傳送到 OpenAI。
     OpenAiConsent(bool),
     OpenAiModel(String),
+    /// 結尾自動換行（`append_newline`）。
+    AppendNewline(bool),
+    /// 關閉視窗時縮到系統匣。
+    CloseToTray(bool),
+    /// 最小化時縮到系統匣。
+    MinimizeToTray(bool),
+    /// 開機（啟動）後直接縮到系統匣。
+    StartMinimized(bool),
 }
 
 impl SettingEdit {
@@ -106,6 +170,10 @@ impl SettingEdit {
             SettingEdit::Engine(v) => s.engine = v.clone(),
             SettingEdit::OpenAiConsent(v) => s.openai_consent = *v,
             SettingEdit::OpenAiModel(v) => s.openai_model = v.clone(),
+            SettingEdit::AppendNewline(v) => s.append_newline = *v,
+            SettingEdit::CloseToTray(v) => s.close_to_tray = *v,
+            SettingEdit::MinimizeToTray(v) => s.minimize_to_tray = *v,
+            SettingEdit::StartMinimized(v) => s.start_minimized = *v,
         }
     }
 
@@ -118,6 +186,10 @@ impl SettingEdit {
                 | SettingEdit::Engine(_)
                 | SettingEdit::OpenAiConsent(_)
                 | SettingEdit::OpenAiModel(_)
+                | SettingEdit::AppendNewline(_)
+                | SettingEdit::CloseToTray(_)
+                | SettingEdit::MinimizeToTray(_)
+                | SettingEdit::StartMinimized(_)
         )
     }
 }
@@ -133,6 +205,12 @@ pub enum Msg {
     ToggleExpanded,
     /// 開關設定面板（浮動收合時自動展開）。
     ToggleSettings,
+    /// 開啟設定並切到指定分頁（浮動收合時自動展開）。
+    OpenSettings(SettingsTab),
+    /// 設定已開啟時切換分頁（捲動歸零）。
+    SettingsTab(SettingsTab),
+    /// 開關錯誤紀錄（浮動收合時先展開，否則清單會被 52px 高度裁掉）。
+    ToggleErrorLog,
     /// 浮動視窗置頂 ↔ 取消置頂。
     TogglePin,
     /// 最小化視窗。
@@ -188,6 +266,29 @@ mod tests {
         assert!(s.openai_consent);
         assert_eq!(s.openai_model, "gpt-transcribe");
         assert!(!SettingEdit::OpenAiConsent(true).needs_settings_changed());
+    }
+
+    #[test]
+    fn window_and_output_edits_apply() {
+        let mut s = UiSettings::default();
+        SettingEdit::AppendNewline(false).apply(&mut s);
+        SettingEdit::CloseToTray(false).apply(&mut s);
+        SettingEdit::MinimizeToTray(true).apply(&mut s);
+        SettingEdit::StartMinimized(true).apply(&mut s);
+        assert!(!s.append_newline && !s.close_to_tray);
+        assert!(s.minimize_to_tray && s.start_minimized);
+        assert!(!SettingEdit::CloseToTray(true).needs_settings_changed());
+    }
+
+    #[test]
+    fn settings_tabs_are_ordered_and_labelled() {
+        assert_eq!(SettingsTab::default(), SettingsTab::General);
+        for (i, tab) in SettingsTab::ALL.into_iter().enumerate() {
+            assert_eq!(tab.index(), i);
+            assert_eq!(SettingsTab::from_id(tab.id()), Some(tab));
+            assert_eq!(tab.label().chars().count(), 2);
+        }
+        assert_eq!(SettingsTab::from_id("nope"), None);
     }
 
     #[test]

@@ -10,6 +10,12 @@
 use super::tests::{app_with, models, templates};
 use super::*;
 use crate::core::TranscriptSegment;
+use crate::ui_acme::local::UiLocal;
+use crate::ui_acme::msg::SettingsTab;
+use crate::ui_acme::paint::{r, View};
+use crate::ui_acme::text::TextEngine;
+use crate::ui_acme::theme::Theme;
+use crate::ui_acme::views::Ctx;
 use acme_render_cpu::CpuRenderer;
 use std::path::Path;
 
@@ -191,7 +197,8 @@ fn base() -> AppViewState {
     AppViewState {
         model_entries: models(),
         template_entries: templates(),
-        current_template: "會議".into(),
+        // 模板列以 id 比對選取狀態（D14）。
+        current_template: "meeting".into(),
         device_label: "CPU".into(),
         error_log: vec![
             "10:01:12 模型下載失敗：連線逾時，請稍後再試".into(),
@@ -220,6 +227,12 @@ fn recording(mut s: AppViewState) -> AppViewState {
         .map(|i| 0.15 + 0.8 * ((i as f32 * 0.7).sin().abs()))
         .collect();
     s.current_partial = "接下來我們討論一下下一個版本的".into();
+    s
+}
+
+fn processing(mut s: AppViewState) -> AppViewState {
+    s.is_processing = true;
+    s.status_text = "辨識中".into();
     s
 }
 
@@ -306,6 +319,213 @@ impl Shooter<'_> {
             }
         }
     }
+    /// 契約元件總覽（不經 app 畫面；給 WP-2 / WP-3 對照元件外觀）。
+    fn gallery(&mut self, name: &str, dark: bool) {
+        self.n += 1;
+        let name = format!("{:02}_{name}", self.n);
+        for scale in SCALES {
+            let state = AppViewState {
+                dark_mode: dark,
+                ..base()
+            };
+            let ui = UiLocal::default();
+            let mut text = TextEngine::new();
+            let theme = Theme::for_mode(dark);
+            let mut v = View::new();
+            {
+                let mut cx = Ctx {
+                    s: &state,
+                    ui: &ui,
+                    t: theme,
+                    text: &mut text,
+                    scale,
+                };
+                draw_gallery(&mut v, &mut cx);
+            }
+            let mut painter = Painter::with_clear(theme.bg);
+            let mut hit = HitTestLayer::new();
+            paint_view(&v, &mut text, &mut painter, &mut hit, None, scale);
+            let scene = painter.finish_checked().expect("scene");
+            let (pw, ph) = (
+                (FULL.0 * scale).round() as u32,
+                (FULL.1 * scale).round() as u32,
+            );
+            let mut cpu = CpuRenderer::new(pw, ph, scale).expect("cpu renderer");
+            cpu.render_scene(&scene).expect("render");
+            let file = format!("{name}@{scale}x.png");
+            std::fs::write(self.dir.join(&file), encode_png(pw, ph, cpu.pixels()))
+                .expect("write png");
+            self.written.push(file);
+        }
+    }
+}
+
+fn draw_gallery(v: &mut View, cx: &mut Ctx<'_>) {
+    use crate::ui_acme::icons::{icon, Icon};
+    use crate::ui_acme::theme::Tone;
+    use crate::ui_acme::views::widgets::*;
+    let t = cx.t;
+    let noop = || Msg::Core(UiCommand::ClearTranscript);
+    // 按鈕
+    let mut x0 = 16.0;
+    for (label, kind, on) in [
+        ("主要", Btn::Primary, true),
+        ("次要", Btn::Secondary, true),
+        ("幽靈", Btn::Ghost, true),
+        ("刪除", Btn::Danger, true),
+        ("停用", Btn::Primary, false),
+    ] {
+        btn(
+            v,
+            cx,
+            r(x0, 16.0, 88.0, CTRL_MD),
+            label,
+            None,
+            kind,
+            on.then(noop),
+        );
+        x0 += 96.0;
+    }
+    btn(
+        v,
+        cx,
+        r(16.0, 56.0, 120.0, CTRL_MD),
+        "下載",
+        Some(Icon::Download),
+        Btn::Secondary,
+        Some(noop()),
+    );
+    btn(
+        v,
+        cx,
+        r(144.0, 56.0, 200.0, CTRL_LG),
+        "開始轉錄",
+        None,
+        Btn::Primary,
+        Some(noop()),
+    );
+    // 圖示 + 圖示按鈕
+    for (i, ic) in Icon::ALL.into_iter().enumerate() {
+        let x = 16.0 + i as f32 * 32.0;
+        icon_btn(v, t, r(x, 108.0, 28.0, 28.0), ic, i == 6, noop());
+        icon(v, r(x + 6.0, 142.0, 16.0, 16.0), ic, t.text);
+    }
+    // 開關
+    toggle(v, t, r(16.0, 168.0, 44.0, 32.0), true, Some(noop()));
+    toggle(v, t, r(72.0, 168.0, 44.0, 32.0), false, Some(noop()));
+    toggle(v, t, r(128.0, 168.0, 44.0, 32.0), true, None);
+    toggle(v, t, r(184.0, 168.0, 44.0, 32.0), false, None);
+    // 分段
+    segmented_fill(
+        v,
+        cx,
+        r(248.0, 168.0, 296.0, CTRL_MD),
+        &[
+            ("a", "台灣繁體"),
+            ("b", "香港繁體"),
+            ("c", "簡體"),
+            ("d", "不轉換"),
+        ],
+        "a",
+        true,
+        |_| noop(),
+    );
+    segmented_fill(
+        v,
+        cx,
+        r(16.0, 208.0, 200.0, CTRL_MD),
+        &[("local", "本機"), ("openai", "OpenAI 雲端")],
+        "local",
+        false,
+        |_| noop(),
+    );
+    // 膠囊、鍵帽
+    let mut px = 16.0;
+    for (label, tone) in [
+        ("本機 · small", Tone::Neutral),
+        ("下載中", Tone::Accent),
+        ("錄音中", Tone::Recording),
+        ("已設定", Tone::Success),
+        ("雲端 · OpenAI", Tone::Warning),
+        ("未設定", Tone::Danger),
+    ] {
+        px += status_pill(v, cx, px, 248.0, label, tone, None) + 6.0;
+    }
+    let mut cxx = 16.0;
+    cxx += toggle_chip(v, cx, cxx, 280.0, "自動貼上", true, noop()) + 8.0;
+    cxx += toggle_chip(v, cx, cxx, 280.0, "剪貼簿", false, noop()) + 16.0;
+    cxx += keycap(v, cx, cxx, 283.0, "Ctrl+Shift+W") + 8.0;
+    keycap(v, cx, cxx, 283.0, "Ctrl+Alt+L");
+    // 卡片
+    for (i, tone) in [Tone::Neutral, Tone::Accent, Tone::Recording, Tone::Warning]
+        .into_iter()
+        .enumerate()
+    {
+        card(
+            v,
+            t,
+            r(16.0 + i as f32 * 134.0, 320.0, 126.0, 40.0),
+            RADIUS_LG,
+            tone,
+        );
+    }
+    // 群組 + 設定列
+    let g = group_begin(v, cx, 16.0, 372.0, 528.0, "快捷鍵", Tone::Neutral);
+    let mut y = g.y;
+    let (h1, c1) = setting_row(v, cx, &g, y, "開始／停止錄音", None, true, false);
+    v.bordered(c1, RADIUS_SM, t.bg2, 1.0, t.border);
+    y += h1;
+    let (h2, c2) = setting_row(
+        v,
+        cx,
+        &g,
+        y,
+        "按住說話",
+        Some("按住快捷鍵時錄音，放開就送出辨識"),
+        true,
+        true,
+    );
+    toggle(
+        v,
+        t,
+        r(
+            c2.origin.x.get() + c2.size.width.get() - TOGGLE_W,
+            c2.origin.y.get(),
+            TOGGLE_W,
+            CTRL_MD,
+        ),
+        true,
+        Some(noop()),
+    );
+    y += h2;
+    let (h3, _c3) = setting_row(v, cx, &g, y, "按住說話快捷鍵", None, false, true);
+    y += h3;
+    let next = group_end(v, g, y);
+    let g2 = group_begin(v, cx, 16.0, next, 528.0, "OpenAI 雲端", Tone::Warning);
+    let (h4, c4) = setting_row(
+        v,
+        cx,
+        &g2,
+        g2.y,
+        "我同意把語音傳送到 OpenAI",
+        Some("需要網路，費用由你的 API 帳號支付；檔案轉錄仍使用本機模型。"),
+        true,
+        false,
+    );
+    toggle(
+        v,
+        t,
+        r(
+            c4.origin.x.get() + c4.size.width.get() - TOGGLE_W,
+            c4.origin.y.get(),
+            TOGGLE_W,
+            CTRL_MD,
+        ),
+        false,
+        Some(noop()),
+    );
+    let y_end = g2.y + h4;
+    group_end(v, g2, y_end);
 }
 
 #[test]
@@ -337,9 +557,25 @@ fn ui_snapshots() {
         st
     };
 
+    let tab = |t: SettingsTab| move |app: &mut AcmeApp| app.ui.settings_tab = t;
+    let needs_model = |st: AppViewState| AppViewState {
+        selected_model_id: "large-v3".into(),
+        model_name: "Large v3".into(),
+        ..st
+    };
+    let cloud = |st: AppViewState| AppViewState {
+        engine: "openai".into(),
+        openai_consent: true,
+        openai_key_set: true,
+        ..st
+    };
+
     // 浮動列
     s.shot("overlay_idle", float(base()), BAR);
     s.shot("overlay_recording", float(recording(base())), BAR);
+    s.shot("overlay_processing", float(processing(base())), BAR);
+    s.shot("overlay_needs_model", float(needs_model(base())), BAR);
+    s.shot("overlay_expanded_idle", expanded(base()), PANEL);
     s.shot(
         "overlay_expanded_recording",
         recording(expanded(with_text(base()))),
@@ -358,13 +594,14 @@ fn ui_snapshots() {
         dark(expanded(with_text(base()))),
         PANEL,
     );
+    // 錯誤紀錄改為展開尺寸（收合時 Msg::ToggleErrorLog 會先展開）。
     s.shot(
         "overlay_error_log",
-        float(AppViewState {
+        expanded(AppViewState {
             show_error_log: true,
             ..base()
         }),
-        BAR,
+        PANEL,
     );
 
     // 完整視窗：即時
@@ -376,15 +613,7 @@ fn ui_snapshots() {
         recording(with_text(base())),
         FULL,
     );
-    s.shot(
-        "live_processing",
-        AppViewState {
-            is_processing: true,
-            status_text: "辨識中".into(),
-            ..with_text(base())
-        },
-        FULL,
-    );
+    s.shot("live_processing", processing(with_text(base())), FULL);
     s.shot(
         "live_model_downloading",
         AppViewState {
@@ -395,10 +624,47 @@ fn ui_snapshots() {
         },
         FULL,
     );
+    s.shot("live_needs_model", needs_model(base()), FULL);
     s.shot(
         "live_ptt_off_hotkey",
         AppViewState {
             ptt_mode: false,
+            ..with_text(base())
+        },
+        FULL,
+    );
+    s.shot("live_cloud_active", cloud(with_text(base())), FULL);
+    s.shot(
+        "live_cloud_incomplete",
+        AppViewState {
+            engine: "openai".into(),
+            openai_consent: false,
+            openai_key_set: false,
+            ..with_text(base())
+        },
+        FULL,
+    );
+    s.shot(
+        "live_privacy",
+        AppViewState {
+            privacy_mode: true,
+            ..with_text(base())
+        },
+        FULL,
+    );
+    s.shot(
+        "live_no_errors",
+        AppViewState {
+            error_log: Vec::new(),
+            ..with_text(base())
+        },
+        FULL,
+    );
+    s.shot(
+        "live_output_off",
+        AppViewState {
+            clipboard_enabled: false,
+            inject_enabled: false,
             ..with_text(base())
         },
         FULL,
@@ -418,6 +684,14 @@ fn ui_snapshots() {
         ..st
     };
     s.shot("file_empty", file(base()), FULL);
+    s.shot(
+        "file_selected",
+        file(AppViewState {
+            file_name: "C:\\錄音\\2024-第三季-產品規劃會議-完整錄音.mp3".into(),
+            ..base()
+        }),
+        FULL,
+    );
     s.shot(
         "file_processing",
         file(AppViewState {
@@ -440,63 +714,114 @@ fn ui_snapshots() {
         FULL,
     );
 
-    // 設定：由上到下
-    s.settings_series("settings_light", settings(base()), FULL, |_| {});
-    s.settings_series(
-        "settings_cloud_consent",
+    // 錯誤紀錄（空）
+    s.shot(
+        "error_log_empty",
+        AppViewState {
+            show_error_log: true,
+            error_log: Vec::new(),
+            ..base()
+        },
+        FULL,
+    );
+
+    // 設定：每個分頁一張（模型與模板頁可捲動）
+    s.shot_with(
+        "settings_general",
+        settings(base()),
+        FULL,
+        tab(SettingsTab::General),
+    );
+    s.shot_with(
+        "settings_engine_local",
+        settings(base()),
+        FULL,
+        tab(SettingsTab::Engine),
+    );
+    s.shot_with(
+        "settings_engine_cloud",
+        settings(cloud(base())),
+        FULL,
+        tab(SettingsTab::Engine),
+    );
+    s.shot_with(
+        "settings_engine_cloud_no_key",
         settings(AppViewState {
-            engine: "openai".into(),
-            openai_consent: true,
-            openai_key_set: true,
+            openai_key_set: false,
+            ..cloud(base())
+        }),
+        FULL,
+        tab(SettingsTab::Engine),
+    );
+    s.shot_with(
+        "settings_engine_privacy",
+        settings(AppViewState {
+            privacy_mode: true,
+            ..cloud(base())
+        }),
+        FULL,
+        tab(SettingsTab::Engine),
+    );
+    s.settings_series(
+        "settings_models",
+        settings(AppViewState {
+            device_label: "Vulkan".into(),
             ..base()
         }),
         FULL,
-        |_| {},
+        tab(SettingsTab::Models),
     );
-    s.settings_series("settings_dark", dark(settings(base())), FULL, |_| {});
-    s.settings_series(
-        "settings_tray_gpu",
+    s.shot_with(
+        "settings_models_downloading",
         settings(AppViewState {
-            close_to_tray: true,
-            minimize_to_tray: true,
-            start_minimized: true,
-            use_gpu: true,
-            device_label: "Vulkan".into(),
+            downloading_id: "large-v3".into(),
+            download_progress: 0.42,
+            ..base()
+        }),
+        FULL,
+        tab(SettingsTab::Models),
+    );
+    s.shot_with(
+        "settings_output",
+        settings(base()),
+        FULL,
+        tab(SettingsTab::Output),
+    );
+    s.settings_series(
+        "settings_templates",
+        settings(base()),
+        FULL,
+        tab(SettingsTab::Templates),
+    );
+    s.shot_with("settings_templates_edit", settings(base()), FULL, |app| {
+        app.ui.settings_tab = SettingsTab::Templates;
+        app.ui.edit_template(1, &templates()[1]);
+    });
+    s.shot_with(
+        "settings_advanced",
+        settings(AppViewState {
             save_status: "✓ 已儲存".into(),
             ..base()
         }),
         FULL,
-        |_| {},
-    );
-    // 模板編輯器（選到自訂模板，並捲到底）
-    s.settings_series("settings_template_editor", settings(base()), FULL, |app| {
-        app.ui.edit_template(1, &templates()[1]);
-    });
-    s.shot_with(
-        "settings_template_editor_builtin",
-        settings(base()),
-        FULL,
-        |app| {
-            app.ui.edit_template(0, &templates()[0]);
-            app.ui.set_scroll(ScrollId::Settings, 100000.0);
-        },
+        tab(SettingsTab::Advanced),
     );
     s.shot_with(
-        "settings_template_editor_new",
-        settings(base()),
+        "settings_general_dark",
+        dark(settings(base())),
         FULL,
-        |app| {
-            app.ui.new_template();
-            app.ui.set_scroll(ScrollId::Settings, 100000.0);
-        },
+        tab(SettingsTab::General),
     );
-    // 浮動面板內的設定
-    s.shot("overlay_settings", settings(expanded(base())), PANEL);
-    s.shot(
-        "overlay_settings_dark",
-        dark(settings(expanded(base()))),
+    s.shot_with(
+        "overlay_settings_general",
+        settings(expanded(base())),
         PANEL,
+        tab(SettingsTab::General),
     );
+
+    // 契約元件總覽
+    s.gallery("widgets_gallery", false);
+    s.gallery("widgets_gallery_dark", true);
 
     // 深色主視窗
     s.shot("dark_live_idle", dark(base()), FULL);

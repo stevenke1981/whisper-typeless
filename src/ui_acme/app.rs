@@ -28,7 +28,7 @@ use acme_platform::{
 use super::controls::{field_key, ime_commit, ime_preedit, offset_at_x, slider_value, FieldKey};
 use super::hwnd;
 use super::local::UiLocal;
-use super::msg::{FieldId, Msg, ScrollId, SettingEdit, SliderKind};
+use super::msg::{FieldId, Msg, ScrollId, SettingEdit, SettingsTab, SliderKind};
 use super::paint::{paint_view, Action, HitMap, SliderSpec};
 use super::text::TextEngine;
 use super::theme::Theme;
@@ -314,6 +314,23 @@ impl AcmeApp {
                 }
                 self.send(UiCommand::SetSettingsOpen(!settings_open));
             }
+            Msg::OpenSettings(tab) => {
+                if floating && !expanded {
+                    self.send(UiCommand::SetFloatingExpanded(true));
+                }
+                self.select_settings_tab(tab);
+                if !settings_open {
+                    self.send(UiCommand::SetSettingsOpen(true));
+                }
+            }
+            Msg::SettingsTab(tab) => self.select_settings_tab(tab),
+            Msg::ToggleErrorLog => {
+                let show = !self.controller.state().show_error_log;
+                if show && floating && !expanded {
+                    self.send(UiCommand::SetFloatingExpanded(true));
+                }
+                self.send(UiCommand::SetShowErrorLog(show));
+            }
             Msg::TogglePin => {
                 self.ui.pinned = !self.ui.pinned;
                 self.geometry_pending = true;
@@ -384,6 +401,15 @@ impl AcmeApp {
                 }
             }
         }
+    }
+
+    /// 切換設定分頁：失焦（快捷鍵欄會照舊重新註冊）並把設定捲動歸零。
+    fn select_settings_tab(&mut self, tab: SettingsTab) {
+        if self.ui.settings_tab != tab {
+            self.blur();
+            self.ui.settings_tab = tab;
+        }
+        self.ui.set_scroll(ScrollId::Settings, 0.0);
     }
 
     fn apply_setting(&mut self, edit: SettingEdit, reapply: bool) {

@@ -56,6 +56,20 @@ pub enum Item {
         color: Color,
         align: Align,
     },
+    /// 線段（水平 / 垂直為精確矩形，斜線由小圓點組成）。
+    Line {
+        from: Point<Logical>,
+        to: Point<Logical>,
+        thickness: f32,
+        color: Color,
+    },
+    /// 空心圓環（外半徑 `radius`、線寬 `thickness`）。
+    Ring {
+        center: Point<Logical>,
+        radius: f32,
+        thickness: f32,
+        color: Color,
+    },
     /// 在 `rect` 寬度內自動換行（由上往下）。
     Wrapped {
         rect: Rect<Logical>,
@@ -162,6 +176,40 @@ impl View {
             radius,
             fill,
             border: Some((width, border)),
+        });
+        self
+    }
+
+    /// 線段（對應 `Painter::line`）。
+    pub fn line(
+        &mut self,
+        from: Point<Logical>,
+        to: Point<Logical>,
+        thickness: f32,
+        color: Color,
+    ) -> &mut Self {
+        self.items.push(Item::Line {
+            from,
+            to,
+            thickness,
+            color,
+        });
+        self
+    }
+
+    /// 空心圓環（對應 `Painter::ring`）。
+    pub fn ring(
+        &mut self,
+        center: Point<Logical>,
+        radius: f32,
+        thickness: f32,
+        color: Color,
+    ) -> &mut Self {
+        self.items.push(Item::Ring {
+            center,
+            radius,
+            thickness,
+            color,
         });
         self
     }
@@ -396,6 +444,18 @@ pub fn paint_view(
                 }
                 None => painter.rounded_rect(*rect, *radius, *fill),
             },
+            Item::Line {
+                from,
+                to,
+                thickness,
+                color,
+            } => painter.line(*from, *to, *thickness, *color),
+            Item::Ring {
+                center,
+                radius,
+                thickness,
+                color,
+            } => painter.ring(*center, *radius, *thickness, *color),
             Item::Text {
                 rect,
                 content,

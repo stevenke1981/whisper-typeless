@@ -991,3 +991,76 @@ fn tray_show_marks_window_visible_again() {
     app.pump();
     assert!(!app.state().window_hidden);
 }
+
+// ─── v0.6 契約：設定分頁、錯誤紀錄 ─────────────────────────────────────────────
+
+#[test]
+fn toggle_error_log_expands_collapsed_bar_first() {
+    let (mut app, _n) = app_with(AppViewState {
+        floating_mode: true,
+        ..AppViewState::default()
+    });
+    app.dispatch(Msg::ToggleErrorLog);
+    assert_eq!(
+        app.sent,
+        vec![
+            UiCommand::SetFloatingExpanded(true),
+            UiCommand::SetShowErrorLog(true)
+        ]
+    );
+    assert!(app.state().floating_expanded && app.state().show_error_log);
+    app.sent.clear();
+    app.dispatch(Msg::ToggleErrorLog);
+    assert_eq!(app.sent, vec![UiCommand::SetShowErrorLog(false)]);
+    assert!(app.state().floating_expanded, "關閉錯誤紀錄不收合");
+}
+
+#[test]
+fn open_settings_selects_tab_and_resets_scroll() {
+    let (mut app, _n) = app_with(AppViewState {
+        floating_mode: true,
+        ..AppViewState::default()
+    });
+    app.ui.set_scroll(ScrollId::Settings, 300.0);
+    app.dispatch(Msg::OpenSettings(SettingsTab::Models));
+    assert_eq!(
+        app.sent,
+        vec![
+            UiCommand::SetFloatingExpanded(true),
+            UiCommand::SetSettingsOpen(true)
+        ]
+    );
+    assert_eq!(app.local().settings_tab, SettingsTab::Models);
+    assert_eq!(app.local().scroll(ScrollId::Settings), 0.0);
+
+    // 已開啟：只換分頁，不重送開啟指令。
+    app.sent.clear();
+    app.ui.set_scroll(ScrollId::Settings, 120.0);
+    app.dispatch(Msg::SettingsTab(SettingsTab::Advanced));
+    assert!(app.sent.is_empty());
+    assert_eq!(app.local().settings_tab, SettingsTab::Advanced);
+    assert_eq!(app.local().scroll(ScrollId::Settings), 0.0);
+    app.dispatch(Msg::OpenSettings(SettingsTab::Engine));
+    assert!(app.sent.is_empty());
+    assert_eq!(app.local().settings_tab, SettingsTab::Engine);
+}
+
+#[test]
+fn switching_tab_blurs_hotkey_field_and_reapplies() {
+    let mut app = app();
+    app.ui.focus = Some(FieldId::Hotkey);
+    app.dispatch(Msg::SettingsTab(SettingsTab::Output));
+    assert!(app.local().focus.is_none());
+    assert_eq!(app.sent, vec![UiCommand::SettingsChanged]);
+}
+
+#[test]
+fn new_setting_edits_reach_core_state() {
+    let mut app = app();
+    app.dispatch(Msg::Setting(SettingEdit::CloseToTray(false)));
+    app.dispatch(Msg::Setting(SettingEdit::StartMinimized(true)));
+    app.dispatch(Msg::Setting(SettingEdit::AppendNewline(false)));
+    let s = app.state();
+    assert!(!s.close_to_tray && s.start_minimized && !s.append_newline);
+    assert!(!app.sent.contains(&UiCommand::SettingsChanged));
+}
