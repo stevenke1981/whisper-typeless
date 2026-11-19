@@ -193,10 +193,31 @@ fn segments() -> Vec<TranscriptSegment> {
     .collect()
 }
 
+/// 與實際程式相同的五個內建模板（核心用的顯示名稱）+ 兩個自訂模板。
+fn snap_templates() -> Vec<crate::core::TemplateEntryView> {
+    let builtin = ["會議記錄", "口語對話", "技術討論", "醫療紀錄", "法律文書"];
+    let mut list: Vec<_> = builtin
+        .iter()
+        .map(|name| crate::core::TemplateEntryView {
+            name: (*name).into(),
+            prompt: format!("以下是{name}。"),
+            is_builtin: true,
+        })
+        .collect();
+    let custom = templates()[1].clone();
+    list.push(custom);
+    list.push(crate::core::TemplateEntryView {
+        name: "客戶拜訪逐字稿".into(),
+        prompt: "業務拜訪客戶的對話，常見詞：報價、交期、規格。".into(),
+        is_builtin: false,
+    });
+    list
+}
+
 fn base() -> AppViewState {
     AppViewState {
         model_entries: models(),
-        template_entries: templates(),
+        template_entries: snap_templates(),
         // 模板列以 id 比對選取狀態（D14）。
         current_template: "meeting".into(),
         device_label: "CPU".into(),
@@ -793,9 +814,9 @@ fn ui_snapshots() {
         FULL,
         tab(SettingsTab::Templates),
     );
-    s.shot_with("settings_templates_edit", settings(base()), FULL, |app| {
+    s.settings_series("settings_templates_edit", settings(base()), FULL, |app| {
         app.ui.settings_tab = SettingsTab::Templates;
-        app.ui.edit_template(1, &templates()[1]);
+        app.ui.edit_template(5, &snap_templates()[5]);
     });
     s.shot_with(
         "settings_advanced",

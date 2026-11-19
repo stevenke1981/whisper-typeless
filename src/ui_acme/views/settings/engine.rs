@@ -5,7 +5,9 @@ use super::super::widgets::{
     CTRL_MD, GROUP_GAP, ROW_H, SP2, SP3,
 };
 use super::super::Ctx;
-use super::{edit, pill_width, right, switch_row, wide_control, ENGINES, OPENAI_MODELS};
+use super::{
+    disabled_field, edit, pill_width, right, switch_row, wide_control, ENGINES, OPENAI_MODELS,
+};
 use crate::core::UiCommand;
 use crate::ui_acme::msg::{FieldId, Msg, SettingEdit};
 use crate::ui_acme::paint::{r, View};
@@ -57,9 +59,12 @@ pub(super) fn content(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32)
 }
 
 /// 琥珀色卡片：同意 → 金鑰（狀態 + 遮蔽輸入 + 儲存 / 移除）→ 雲端模型。回傳下一個群組的 y。
+/// 隱私模式下雲端不會被使用：卡片改為中性色、每一列都停用。
 fn cloud_group(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32) -> f32 {
     let s = cx.s;
-    let g = group_begin(v, cx, x0, y0, cw, "OpenAI 雲端", Tone::Warning);
+    let live = !s.privacy_mode;
+    let tone = if live { Tone::Warning } else { Tone::Neutral };
+    let g = group_begin(v, cx, x0, y0, cw, "OpenAI 雲端", tone);
     let mut y = g.y;
     y += switch_row(
         v,
@@ -69,7 +74,7 @@ fn cloud_group(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32) -> f32
         "我同意把語音傳送到 OpenAI",
         Some("需要網路，費用由你的 API 帳號支付；檔案轉錄仍使用本機模型。"),
         s.openai_consent,
-        Some(edit(SettingEdit::OpenAiConsent(!s.openai_consent))),
+        live.then(|| edit(SettingEdit::OpenAiConsent(!s.openai_consent))),
         false,
     );
 
@@ -81,7 +86,7 @@ fn cloud_group(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32) -> f32
         y,
         "API 金鑰",
         Some("以 Windows 加密保存在本機，不寫入設定檔。"),
-        true,
+        live,
         true,
     );
     let (label, tone) = if s.openai_key_set {
@@ -108,12 +113,12 @@ fn cloud_group(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32) -> f32
     let remove_w = if s.openai_key_set { 84.0 } else { 0.0 };
     let gaps = if s.openai_key_set { 2.0 * SP2 } else { SP2 };
     let field_w = (inner_r - inner_x - save_w - remove_w - gaps).max(60.0);
-    text_field(
-        v,
-        cx,
-        r(inner_x, row_y, field_w, CTRL_MD),
-        FieldId::OpenAiKey,
-    );
+    let field = r(inner_x, row_y, field_w, CTRL_MD);
+    if live {
+        text_field(v, cx, field, FieldId::OpenAiKey);
+    } else {
+        disabled_field(v, cx, field, "貼上 sk-… 金鑰");
+    }
     let has_input = !cx.ui.fields.get(FieldId::OpenAiKey).text.trim().is_empty();
     btn(
         v,
@@ -122,7 +127,7 @@ fn cloud_group(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32) -> f32
         "儲存",
         None,
         Btn::Primary,
-        has_input.then_some(Msg::OpenAiKeySave),
+        (live && has_input).then_some(Msg::OpenAiKeySave),
     );
     if s.openai_key_set {
         btn(
@@ -132,14 +137,14 @@ fn cloud_group(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32) -> f32
             "移除金鑰",
             None,
             Btn::Ghost,
-            Some(Msg::Core(UiCommand::ClearOpenAiKey)),
+            live.then_some(Msg::Core(UiCommand::ClearOpenAiKey)),
         );
     }
     y += ROW_H - SP2;
 
-    let (h, ctrl) = setting_row(v, cx, &g, y, "雲端模型", None, true, true);
+    let (h, ctrl) = setting_row(v, cx, &g, y, "雲端模型", None, live, true);
     let ctrl = wide_control(cx, &g, ctrl, "雲端模型", 320.0);
-    segmented_fill(v, cx, ctrl, &OPENAI_MODELS, &s.openai_model, true, |id| {
+    segmented_fill(v, cx, ctrl, &OPENAI_MODELS, &s.openai_model, live, |id| {
         edit(SettingEdit::OpenAiModel(id.to_string()))
     });
     y += h;

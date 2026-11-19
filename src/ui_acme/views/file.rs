@@ -2,7 +2,7 @@
 
 use acme_core::{Logical, Rect};
 
-use super::live::scrollbar;
+use super::live::{error_badge, scrollbar};
 use super::widgets::{
     btn, card, progress, segmented_fill, status_pill, Btn, CTRL_LG, CTRL_MD, FONT_MD, FONT_SM,
     FONT_XS, RADIUS_MD, SP2, SP3, SP4,
@@ -15,6 +15,9 @@ use crate::ui_acme::text::Align;
 use crate::ui_acme::theme::Tone;
 
 pub const FORMATS: [(&str, &str); 3] = [("txt", "TXT"), ("srt", "SRT"), ("vtt", "VTT")];
+
+/// 頁尾高（與即時頁相同）。
+const FOOTER_H: f32 = 48.0;
 
 /// 路徑只顯示檔名。
 pub fn display_name(path: &str) -> &str {
@@ -93,9 +96,23 @@ pub fn view(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
         !busy,
         |id| Msg::Core(UiCommand::SetFileOutputFormat(id.to_string())),
     );
+    if s.file_has_result && !busy {
+        // 完成膠囊放在格式列右側，版面不會因完成而往下跳。
+        let label = "轉錄完成";
+        let pw = cx.text.measure_width(label, FONT_XS, true) + 32.0;
+        status_pill(
+            v,
+            cx,
+            x0 + w - pw,
+            y + (CTRL_MD - 24.0) / 2.0,
+            label,
+            Tone::Success,
+            None,
+        );
+    }
     y += CTRL_MD + SP3;
 
-    // ── 進度 / 完成 ──
+    // ── 進度 ──
     if busy {
         let pct = (s.file_progress.clamp(0.0, 1.0) * 100.0).round() as i32;
         v.text(
@@ -107,9 +124,6 @@ pub fn view(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
         );
         progress(v, t, r(x0, y + 20.0, w, 6.0), s.file_progress, t.accent);
         y += 34.0;
-    } else if s.file_has_result {
-        status_pill(v, cx, x0, y, "轉錄完成", Tone::Success, None);
-        y += 32.0;
     }
 
     // ── 開始 ──
@@ -123,18 +137,39 @@ pub fn view(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
     } else {
         ("開始轉錄", Btn::Primary, Some(start))
     };
-    btn(v, cx, r(x0, y, w, CTRL_LG), label, None, kind, msg);
-    y += CTRL_LG + SP3;
+    // 完成後「重新轉錄」降為 32 高，讓結果卡的「匯出」成為主要動作。
+    let start_h = if s.file_has_result && !busy {
+        CTRL_MD
+    } else {
+        CTRL_LG
+    };
+    btn(v, cx, r(x0, y, w, start_h), label, None, kind, msg);
+    y += start_h + SP3;
 
-    // ── 頁尾說明 ──
+    // ── 頁尾：與即時頁相同的 48px 列（說明 + 錯誤徽章）──
+    let full = !s.floating_mode;
+    let fy = bottom - FOOTER_H;
+    let fx = rect.origin.x.get();
+    let fw = rect.size.width.get();
+    if full {
+        v.rect(r(fx, fy, fw, FOOTER_H), 0.0, t.bg2);
+        v.rect(r(fx, fy, fw, 1.0), 0.0, t.border);
+    } else {
+        v.rect(r(fx, fy, fw, 1.0), 0.0, t.glass_hairline);
+    }
+    let mut note_right = x0 + w;
+    let errors = s.error_log.len();
+    if full && errors > 0 {
+        note_right -= error_badge(v, cx, x0 + w, fy + (FOOTER_H - 24.0) / 2.0, errors) + SP2;
+    }
     v.text(
-        r(x0, bottom - 28.0, w, 20.0),
+        r(x0, fy, (note_right - x0).max(0.0), FOOTER_H),
         "檔案轉錄一律使用本機模型",
         FONT_XS,
         t.text2,
         Align::Start,
     );
-    let area_bottom = bottom - 36.0;
+    let area_bottom = fy - SP3;
 
     // ── 結果 ──
     if s.file_has_result && !busy {
@@ -277,6 +312,17 @@ mod tests {
         assert!(has_text(&v, "轉錄中…"));
         assert!(!can(&v, UiCommand::StartFileTranscription));
         assert!(!can(&v, UiCommand::OpenFileDialog));
+    }
+
+    #[test]
+    fn footer_shows_error_badge_only_with_errors() {
+        let mut s = AppViewState::default();
+        let want = Action::Click(Msg::ToggleErrorLog);
+        assert!(build(&s).find_hit(|a| *a == want).is_none());
+        s.error_log = vec!["10:00:00 x".into()];
+        let v = build(&s);
+        assert!(v.find_hit(|a| *a == want).is_some());
+        assert!(has_text(&v, "檔案轉錄一律使用本機模型"));
     }
 
     #[test]

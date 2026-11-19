@@ -8,7 +8,7 @@ use super::widgets::{
     btn, card, icon_btn, keycap, progress, record_button, segmented_fill, status_pill, toggle_chip,
     waveform, Btn, CTRL_SM, FONT_MD, FONT_SM, FONT_XL, FONT_XS, RADIUS_LG, RADIUS_SM, SP2, SP4,
 };
-use super::{cloud_ready, file, onboarding, phase, Ctx, Phase, BAR_H, TEMPLATES};
+use super::{cloud_ready, file, onboarding, phase, template_chips, Ctx, Phase, BAR_H};
 use crate::core::{AppViewState, UiCommand};
 use crate::ui_acme::icons::{icon, Icon};
 use crate::ui_acme::msg::{Msg, ScrollId, SettingsTab};
@@ -175,7 +175,20 @@ pub fn compact_bar(v: &mut View, cx: &mut Ctx<'_>, width: f32) {
     v.rect(r(0.0, 12.0, 4.0, BAR_H - 24.0), 2.0, bar);
     // 整條都可以拖曳；按鈕壓在上面
     v.drag_area(r(0.0, 0.0, width, BAR_H));
-    record_button(v, cx, r(14.0, 8.0, 36.0, 36.0));
+    if matches!(ph, Phase::NeedsModel | Phase::Downloading) {
+        // 還不能錄音：琥珀色下載圖示取代錄音鍵，點擊展開面板完成設定。
+        let disc = r(14.0, 8.0, 36.0, 36.0);
+        v.rect(disc, 18.0, t.warning_soft);
+        icon(v, r(24.0, 18.0, 16.0, 16.0), Icon::Download, t.warning_text);
+        v.button(
+            disc,
+            18.0,
+            Msg::Core(UiCommand::SetFloatingExpanded(true)),
+            t.hover,
+        );
+    } else {
+        record_button(v, cx, r(14.0, 8.0, 36.0, 36.0));
+    }
 
     // 圖示（由右往左：關閉、切到完整視窗、展開、設定）
     let tool = 28.0;
@@ -216,14 +229,14 @@ pub fn compact_bar(v: &mut View, cx: &mut Ctx<'_>, width: f32) {
             return "尚未設定快捷鍵".into();
         }
         let full = if s.ptt_mode && !s.ptt_hotkey.is_empty() {
-            format!("{} 開始 · 按住 {}", s.hotkey, s.ptt_hotkey)
+            format!("{} 開始／停止 · 按住 {}", s.hotkey, s.ptt_hotkey)
         } else {
-            format!("{} 開始", s.hotkey)
+            format!("{} 開始／停止", s.hotkey)
         };
         if cx.text.measure_width(&full, FONT_XS, false) <= tw {
             full
         } else {
-            format!("{} 開始", s.hotkey)
+            format!("{} 開始／停止", s.hotkey)
         }
     };
     match ph {
@@ -304,7 +317,13 @@ fn segment_tabs(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
 }
 
 /// 錯誤徽章（Alert 圖示 + 數量），右緣在 `right`。回傳寬度。
-fn error_badge(v: &mut View, cx: &mut Ctx<'_>, right: f32, y0: f32, count: usize) -> f32 {
+pub(super) fn error_badge(
+    v: &mut View,
+    cx: &mut Ctx<'_>,
+    right: f32,
+    y0: f32,
+    count: usize,
+) -> f32 {
     let t = cx.t;
     let label = count.to_string();
     let text_w = cx.text.measure_width(&label, FONT_XS, true);
@@ -532,22 +551,73 @@ fn hotkey_line(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32) {
     x += keycap(v, cx, x, y0, &s.hotkey) + 6.0;
     label(v, cx, &mut x, "開始／停止");
     if s.ptt_mode && !s.ptt_hotkey.is_empty() {
-        label(v, cx, &mut x, "· 按住");
+        label(v, cx, &mut x, "·");
+        label(v, cx, &mut x, "按住");
         x += keycap(v, cx, x, y0, &s.ptt_hotkey) + 6.0;
         label(v, cx, &mut x, "說話");
     }
 }
 
-/// 情境模板列：文字膠囊（高 28），選取項為 accent 實心。
+/// 模板膠囊文字的最大寬度（更長的自訂名稱尾端省略）。
+const CHIP_TEXT_MAX: f32 = 120.0;
+/// 模板膠囊之間的距離。
+const CHIP_GAP: f32 = 6.0;
+
+/// 情境模板列：「自動」+ `template_entries` 的文字膠囊（高 28），選取項為 accent 實心。
+/// 放不下時收起其餘項目（選取項一律保留），最後放一個「更多 N」膠囊開啟設定 › 模板。
 fn context_bar(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
     let t = cx.t;
-    let (x0, y0, _, h) = rx(rect);
-    let mut x = x0 + SP4;
+    let (x0, y0, w, h) = rx(rect);
     let y = y0 + (h - CTRL_SM) / 2.0;
-    for (id, _, name) in TEMPLATES {
-        let selected = cx.s.current_template == id;
-        let tw = cx.text.measure_width(name, FONT_XS, selected);
-        let chip = r(x, y, tw + 24.0, CTRL_SM);
+    let avail = (w - 2.0 * SP4).max(0.0);
+    let chips = template_chips(cx.s);
+    let sel_idx = chips
+        .iter()
+        .position(|(id, _)| *id == cx.s.current_template);
+    let labels: Vec<(String, f32)> = chips
+        .iter()
+        .enumerate()
+        .map(|(i, (_, name))| {
+            let sel = Some(i) == sel_idx;
+            let label = cx.text.elide(name, FONT_XS, sel, CHIP_TEXT_MAX);
+            let cw = cx.text.measure_width(&label, FONT_XS, sel) + 24.0;
+            (label, cw)
+        })
+        .collect();
+    let total: f32 = labels.iter().map(|(_, cw)| cw).sum::<f32>()
+        + CHIP_GAP * labels.len().saturating_sub(1) as f32;
+    let mut show = vec![true; labels.len()];
+    if total > avail {
+        let more_w = cx.text.measure_width("更多 99", FONT_XS, false) + 24.0;
+        let budget = avail - more_w;
+        let reserve_sel = sel_idx.map_or(0.0, |i| labels[i].1 + CHIP_GAP);
+        let mut used = 0.0;
+        for (i, (_, cw)) in labels.iter().enumerate() {
+            if Some(i) == sel_idx {
+                used += cw + CHIP_GAP;
+                continue;
+            }
+            let pending_sel = if sel_idx.is_some_and(|s| s > i) {
+                reserve_sel
+            } else {
+                0.0
+            };
+            if used + cw + CHIP_GAP + pending_sel <= budget {
+                used += cw + CHIP_GAP;
+            } else {
+                show[i] = false;
+            }
+        }
+    }
+    let hidden = show.iter().filter(|s| !**s).count();
+    v.push_clip(r(x0 + SP4, y0, avail, h));
+    let mut x = x0 + SP4;
+    for (i, ((id, _), (label, cw))) in chips.iter().zip(&labels).enumerate() {
+        if !show[i] {
+            continue;
+        }
+        let selected = Some(i) == sel_idx;
+        let chip = r(x, y, *cw, CTRL_SM);
         v.rect(
             chip,
             CTRL_SM / 2.0,
@@ -555,7 +625,7 @@ fn context_bar(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
         );
         v.styled_text(
             chip,
-            name,
+            label.clone(),
             FONT_XS,
             selected,
             if selected { t.on_accent } else { t.text2 },
@@ -565,12 +635,26 @@ fn context_bar(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
             v.button(
                 chip,
                 CTRL_SM / 2.0,
-                Msg::Core(UiCommand::TemplateSelected(id.to_string())),
+                Msg::Core(UiCommand::TemplateSelected(id.clone())),
                 t.hover,
             );
         }
-        x += tw + 24.0 + 6.0;
+        x += cw + CHIP_GAP;
     }
+    if hidden > 0 {
+        let label = format!("更多 {hidden}");
+        let cw = cx.text.measure_width(&label, FONT_XS, false) + 24.0;
+        let chip = r(x, y, cw, CTRL_SM);
+        v.bordered(chip, CTRL_SM / 2.0, t.bg2, 1.0, t.border_strong);
+        v.text(chip, label, FONT_XS, t.text2, Align::Center);
+        v.button(
+            chip,
+            CTRL_SM / 2.0,
+            Msg::OpenSettings(SettingsTab::Templates),
+            t.hover,
+        );
+    }
+    v.pop_clip();
 }
 
 /// 頁尾：輸出方式開關、（完整視窗的）錯誤徽章、引擎膠囊。
@@ -668,7 +752,8 @@ pub fn transcript(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
         return;
     }
     let row_pad = 10.0;
-    let list_w = (w - 2.0 * SP4 - 6.0).max(40.0);
+    // 分隔線與進行中列用滿內容寬；捲軸畫在右側 16px 邊距裡。
+    let list_w = (w - 2.0 * SP4).max(40.0);
     let text_w = (list_w - TIME_W - SP2).max(40.0);
     let text_h = |cx: &mut Ctx<'_>, text: &str| cx.text.measure_wrapped(text, FONT_MD, text_w);
 
@@ -1003,11 +1088,95 @@ mod tests {
     }
 
     #[test]
+    fn template_row_selects_custom_templates_by_name() {
+        use crate::core::TemplateEntryView;
+        let entry = |name: &str, is_builtin: bool| TemplateEntryView {
+            name: name.into(),
+            prompt: String::new(),
+            is_builtin,
+        };
+        let mut s = state();
+        s.template_entries = vec![entry("會議記錄", true), entry("客戶拜訪", false)];
+        s.current_template = "meeting".into();
+        let v = full_view(&s);
+        assert!(has_text(&v, "客戶拜訪"));
+        assert!(can(
+            &v,
+            Msg::Core(UiCommand::TemplateSelected("客戶拜訪".into()))
+        ));
+        assert!(can(
+            &v,
+            Msg::Core(UiCommand::TemplateSelected("auto".into()))
+        ));
+        // 選取自訂模板後，它被標為選取（不可再點），其他項可點。
+        s.current_template = "客戶拜訪".into();
+        let v = full_view(&s);
+        assert!(!can(
+            &v,
+            Msg::Core(UiCommand::TemplateSelected("客戶拜訪".into()))
+        ));
+        assert!(can(
+            &v,
+            Msg::Core(UiCommand::TemplateSelected("meeting".into()))
+        ));
+    }
+
+    #[test]
+    fn template_row_overflow_keeps_selection_and_links_to_settings() {
+        use crate::core::TemplateEntryView;
+        let mut s = state();
+        s.template_entries = (0..12)
+            .map(|i| TemplateEntryView {
+                name: format!("很長的自訂模板名稱 {i}"),
+                prompt: String::new(),
+                is_builtin: false,
+            })
+            .collect();
+        s.current_template = "很長的自訂模板名稱 11".into();
+        let v = full_view(&s);
+        assert!(can(&v, Msg::OpenSettings(SettingsTab::Templates)));
+        assert!(v.items.iter().any(|i| matches!(
+            i,
+            Item::Text { content, .. } if content.starts_with("更多 ")
+        )));
+        // 選取項放不下也一定看得到（不可點 = 已選取，且有畫出來）。
+        assert!(!can(
+            &v,
+            Msg::Core(UiCommand::TemplateSelected("很長的自訂模板名稱 11".into()))
+        ));
+        assert!(can(
+            &v,
+            Msg::Core(UiCommand::TemplateSelected("auto".into()))
+        ));
+        // 所有膠囊都在 560 寬視窗的內容區內。
+        for item in &v.items {
+            if let Item::Hit { rect, .. } = item {
+                assert!(rect.origin.x.get() + rect.size.width.get() <= 560.0 + 0.5);
+            }
+        }
+    }
+
+    #[test]
+    fn compact_bar_needs_model_shows_download_disc_that_expands() {
+        let mut s = state();
+        s.ptt_mode = false;
+        s.selected_model_id = "base".into();
+        s.model_entries = vec![ModelEntryView {
+            id: "base".into(),
+            ..ModelEntryView::default()
+        }];
+        let v = bar(&s);
+        assert!(can(&v, Msg::Core(UiCommand::SetFloatingExpanded(true))));
+        assert!(!can(&v, Msg::Core(UiCommand::ToggleRecording)));
+    }
+
+    #[test]
     fn compact_bar_text_differs_per_state() {
         let mut s = state();
         let v = bar(&s);
         assert!(has_text(&v, "就緒"));
-        assert!(has_text(&v, "Ctrl+Shift+W 開始 · 按住 Ctrl+Alt+L"));
+        // 380 寬放不下 PTT 提示時依規格省略，只留「{熱鍵} 開始／停止」。
+        assert!(has_text(&v, "Ctrl+Shift+W 開始／停止"));
         assert!(can(&v, Msg::ToggleSettings));
         assert!(can(&v, Msg::ToggleExpanded));
         assert!(can(&v, Msg::ToggleFloating));

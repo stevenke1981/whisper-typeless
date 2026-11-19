@@ -315,6 +315,49 @@ fn privacy_mode_disables_engine_choice_with_explanation() {
 }
 
 #[test]
+fn privacy_mode_greys_out_the_cloud_card() {
+    let mut ui = on_tab(SettingsTab::Engine);
+    set_text(&mut ui.fields.openai_key, "sk-secret-xyz");
+    let s = AppViewState {
+        privacy_mode: true,
+        openai_consent: true,
+        openai_key_set: true,
+        ..openai()
+    };
+    let v = build_sized(&s, &ui, 560.0, 620.0);
+    assert!(texts(&v).iter().any(|t| t == "我同意把語音傳送到 OpenAI"));
+    assert!(!has_click(
+        &v,
+        Msg::Setting(SettingEdit::OpenAiConsent(false))
+    ));
+    assert!(!has_field(&v, FieldId::OpenAiKey));
+    assert!(!has_click(&v, Msg::OpenAiKeySave));
+    assert!(!has_click(&v, Msg::Core(UiCommand::ClearOpenAiKey)));
+    assert!(!has_click(
+        &v,
+        Msg::Setting(SettingEdit::OpenAiModel("gpt-transcribe".into()))
+    ));
+    let t = Theme::for_mode(false);
+    let amber = v.items.iter().any(|i| {
+        matches!(i, Item::Rect { fill, border: Some((_, line)), .. }
+            if *fill == t.warning_soft && *line == t.warning_line)
+    });
+    assert!(!amber, "隱私模式下雲端卡片不用琥珀色");
+    // 關掉隱私模式就恢復可操作的琥珀卡片。
+    let v = build_sized(
+        &AppViewState {
+            privacy_mode: false,
+            ..s
+        },
+        &ui,
+        560.0,
+        620.0,
+    );
+    assert!(has_field(&v, FieldId::OpenAiKey));
+    assert!(has_click(&v, Msg::Core(UiCommand::ClearOpenAiKey)));
+}
+
+#[test]
 fn openai_engine_shows_consent_key_and_model_in_order() {
     let mut ui = on_tab(SettingsTab::Engine);
     set_text(&mut ui.fields.openai_key, "sk-secret-xyz");
@@ -491,6 +534,7 @@ fn templates_tab_lists_and_edits() {
     let v = build_sized(&s, &ui, 560.0, 620.0);
     assert!(has_field(&v, FieldId::TemplateName));
     assert!(has_field(&v, FieldId::TemplatePrompt));
+    assert!(texts(&v).iter().any(|t| t == "4 字"), "提示詞字數");
     assert!(has_click(&v, Msg::TemplateEditSave));
     assert!(has_click(&v, Msg::TemplateEditDelete));
 

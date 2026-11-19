@@ -1,8 +1,10 @@
 //! 檢視：`AppViewState`（＋畫面本地狀態）→ [`View`] 描述樹的純函式。
 //!
-//! - 浮動模式：緊湊列 380×52，展開為 380×540（快速操作、模板列、波形、轉錄 / 檔案模式）。
-//! - 完整模式：標題列、即時 / 檔案分頁、模板列、波形、轉錄、控制列、狀態列。
-//! - 浮層：錯誤紀錄、設定面板（兩種模式共用）。
+//! 版面依 `docs/ui-redesign.md`：
+//! - 浮動模式：緊湊列 380×52（狀態色條、錄音鍵、兩行狀態文字、四個圖示），展開為 380×540
+//!   （即時 / 檔案分段、置頂、模板列、紀錄、頁尾）。
+//! - 完整模式：標題列（即時 / 檔案分段）、狀態卡、模板列、紀錄、頁尾（輸出方式、引擎膠囊、錯誤徽章）。
+//! - 浮層：錯誤紀錄、六分頁設定面板（兩種模式共用）。
 
 pub mod file;
 pub mod live;
@@ -24,23 +26,64 @@ pub const BAR_W: f32 = 380.0;
 pub const BAR_H: f32 = 52.0;
 pub const EXPANDED_H: f32 = 540.0;
 
-/// 情境模板列（與 Slint `AppWindow.templates` 相同）。
-pub const TEMPLATES: [(&str, &str, &str); 6] = [
-    ("auto", "🔮", "自動"),
-    ("meeting", "🏢", "會議"),
-    ("casual", "💬", "口語"),
-    ("technical", "💻", "技術"),
-    ("medical", "🏥", "醫療"),
-    ("legal", "⚖", "法律"),
+/// 內建情境模板 `(穩定 id, 短名稱)`；`auto` 由偵測器自動選擇。
+pub const TEMPLATES: [(&str, &str); 6] = [
+    ("auto", "自動"),
+    ("meeting", "會議"),
+    ("casual", "口語"),
+    ("technical", "技術"),
+    ("medical", "醫療"),
+    ("legal", "法律"),
 ];
 
-/// 模板 id → 顯示名稱。
+/// 模板 id → 顯示名稱（內建用短名稱，自訂模板的 id 就是名稱）。
 pub fn template_label(id: &str) -> &str {
     TEMPLATES
         .iter()
-        .find(|(tid, _, _)| *tid == id)
-        .map(|(_, _, name)| *name)
+        .find(|(tid, _)| *tid == id)
+        .map(|(_, name)| *name)
         .unwrap_or(id)
+}
+
+/// 模板列的選項 `(TemplateSelected 用的 id, 標籤)`：「自動」+ `template_entries`。
+///
+/// id 與 `TemplateId::stable_id` 相同：內建模板是英文 id（`meeting` …），自訂模板是名稱本身
+/// （`TemplateId::from_stable_id` 會還原成 `Custom(名稱)`）。清單尚未載入時退回六個內建選項。
+pub fn template_chips(s: &AppViewState) -> Vec<(String, String)> {
+    use crate::context_templates::TemplateId;
+    if s.template_entries.is_empty() {
+        return TEMPLATES
+            .iter()
+            .map(|(id, name)| (id.to_string(), name.to_string()))
+            .collect();
+    }
+    const BUILTIN: [TemplateId; 5] = [
+        TemplateId::Meeting,
+        TemplateId::Casual,
+        TemplateId::Technical,
+        TemplateId::Medical,
+        TemplateId::Legal,
+    ];
+    let mut chips = vec![("auto".to_string(), "自動".to_string())];
+    for entry in &s.template_entries {
+        let builtin = entry.is_builtin.then(|| {
+            BUILTIN.iter().map(TemplateId::stable_id).find(|id| {
+                let tid = TemplateId::from_stable_id(id);
+                tid.display_name() == entry.name || template_label(id) == entry.name
+            })
+        });
+        let chip = match builtin.flatten() {
+            Some(id) => {
+                let label = template_label(&id).to_string();
+                (id, label)
+            }
+            None => (entry.name.clone(), entry.name.clone()),
+        };
+        if !chips.iter().any(|(id, _)| *id == chip.0) {
+            chips.push(chip);
+        }
+    }
+    chips
 }
 
 /// 目前狀態下的視窗邏輯尺寸。
@@ -164,6 +207,45 @@ mod tests {
         s.openai_key_set = true;
         s.engine = "local".into();
         assert!(!cloud_ready(&s));
+    }
+
+    #[test]
+    fn template_chips_use_stable_ids_for_builtins_and_names_for_custom() {
+        use crate::context_templates::TemplateId;
+        use crate::core::TemplateEntryView;
+        let entry = |name: &str, is_builtin: bool| TemplateEntryView {
+            name: name.into(),
+            prompt: String::new(),
+            is_builtin,
+        };
+        let s = AppViewState {
+            template_entries: vec![
+                entry("會議記錄", true),
+                entry("口語", true),
+                entry("客戶拜訪", false),
+            ],
+            ..AppViewState::default()
+        };
+        let chips = template_chips(&s);
+        let pairs: Vec<(&str, &str)> = chips
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("auto", "自動"),
+                ("meeting", "會議"),
+                ("casual", "口語"),
+                ("客戶拜訪", "客戶拜訪"),
+            ]
+        );
+        // 自訂模板的 id 經核心還原後就是該自訂模板。
+        assert_eq!(
+            TemplateId::from_stable_id("客戶拜訪"),
+            TemplateId::Custom("客戶拜訪".into())
+        );
+        assert_eq!(template_chips(&AppViewState::default()).len(), 6);
     }
 
     #[test]

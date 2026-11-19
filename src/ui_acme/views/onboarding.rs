@@ -33,10 +33,10 @@ pub fn card(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
             let model = s.model_entries.iter().find(|m| m.id == s.selected_model_id);
             let body = match model {
                 Some(m) => format!(
-                    "下載 {}（{} MB）後即可開始，只需一次；語音只在本機處理。",
+                    "下載 {}（{} MB）即可開始，只需一次，語音不離開電腦。",
                     m.display_name, m.size_mb
                 ),
-                None => "下載語音模型後即可開始，只需一次；語音只在本機處理。".to_string(),
+                None => "下載語音模型即可開始，只需一次，語音不離開電腦。".to_string(),
             };
             let download = Some(Msg::Core(UiCommand::ModelSelectOrDownload(
                 s.selected_model_id.clone(),
@@ -82,7 +82,9 @@ pub fn card(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
                 );
                 return;
             }
-            let text_w = (w0 - 2.0 * SP4 - btn_w - SP3).max(80.0);
+            // 寬版按鈕窄一點、間距 8，讓一句說明在 528 寬的卡片裡放得下。
+            let btn_w = 88.0;
+            let text_w = (w0 - 2.0 * SP4 - btn_w - SP2).max(80.0);
             v.bold_text(
                 r(x0 + SP4, y0 + 12.0, text_w, 28.0),
                 TITLE_NEEDS_MODEL,

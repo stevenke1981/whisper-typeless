@@ -147,7 +147,23 @@ pub(super) fn content(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32)
         r(inner_x, y, inner_w, CTRL_MD),
         FieldId::TemplatePrompt,
     );
-    y += CTRL_MD + SP3;
+    y += CTRL_MD + SP1;
+    // 單行欄位看不到全文：在下方顯示字數，讓長提示詞也有回饋。
+    let count = cx
+        .ui
+        .fields
+        .get(FieldId::TemplatePrompt)
+        .text
+        .chars()
+        .count();
+    v.text(
+        r(inner_x, y, inner_w, 16.0),
+        format!("{count} 字"),
+        FONT_XS,
+        t.text2,
+        Align::End,
+    );
+    y += 16.0 + SP3;
     btn(
         v,
         cx,

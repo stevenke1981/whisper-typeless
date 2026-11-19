@@ -116,6 +116,8 @@ pub fn icon(v: &mut View, rect: Rect<Logical>, icon: Icon, color: Color) {
         }
         Icon::Pin => {
             v.ring(g.p(8.0, 5.5), g.len(3.25), sw, color);
+            // 橫桿讓圖釘不會看起來像放大鏡。
+            line(v, (4.5, 8.75), (11.5, 8.75));
             line(v, (8.0, 8.75), (8.0, 14.0));
         }
         Icon::Alert => {

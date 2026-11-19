@@ -69,7 +69,7 @@ pub(super) fn models() -> Vec<ModelEntryView> {
     vec![
         ModelEntryView {
             id: "small".into(),
-            display_name: "Small (466 MB)".into(),
+            display_name: "Small".into(),
             is_downloaded: true,
             size_mb: 466,
             quality: 3,

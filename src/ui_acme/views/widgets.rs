@@ -1,10 +1,9 @@
-//! 共用控制項：按鈕、chip、開關、分段選擇、滑桿、步進器、進度條、文字框、波形、錄音鍵。
+//! 共用控制項與 v0.6 設計 tokens（`docs/ui-redesign.md` 2.2 / 2.3 / 4.2）。
 //!
-//! v0.6 契約元件（`docs/ui-redesign.md` 2.3 / 4.2）：[`btn`]、[`icon_btn`]、[`toggle`]、
-//! [`segmented_fill`]、[`card`]、[`status_pill`]、[`toggle_chip`]、[`keycap`]、
-//! [`group_begin`] / [`group_end`]、[`setting_row`]。`msg = None` 一律表示停用。
-//! 舊元件（`icon_button`、`text_button`、`chip`、`switch`、`segmented`、`section_header`、
-//! `toggle_row`）暫時保留給尚未改版的畫面，改版合併後移除。
+//! 元件：[`btn`]、[`icon_btn`]、[`toggle`]、[`segmented_fill`]、[`card`]、[`status_pill`]、
+//! [`toggle_chip`]、[`keycap`]、[`group_begin`] / [`group_end`]、[`setting_row`]，以及
+//! [`slider`]、[`stepper`]、[`progress`]、[`text_field`]、[`waveform`]、[`record_button`]。
+//! `msg = None` 一律表示停用。
 
 use acme_core::{Color, CursorHint, Logical, Rect};
 use acme_textinput::{byte_offset_to_x, scroll_caret_into_view};
@@ -50,6 +49,9 @@ pub const CTRL_LG: f32 = 44.0;
 
 /// 設定列（無說明）高度。
 pub const ROW_H: f32 = 44.0;
+/// 有說明的設定列：上下內距與標題行高（列高 = 10 + 18 + 2 + 說明高 + 10）。
+const HINT_ROW_PAD: f32 = 10.0;
+const HINT_TITLE_H: f32 = 18.0;
 /// 群組標題高度。
 pub const GROUP_TITLE_H: f32 = 24.0;
 /// 群組之間的距離。
@@ -74,133 +76,6 @@ fn w(rect: Rect<Logical>) -> f32 {
 }
 fn h(rect: Rect<Logical>) -> f32 {
     rect.size.height.get()
-}
-
-/// 方形圖示按鈕。`bg` 為 `None` 時透明。
-#[allow(clippy::too_many_arguments)]
-pub fn icon_button(
-    v: &mut View,
-    t: &Theme,
-    rect: Rect<Logical>,
-    label: &str,
-    size: f32,
-    fg: Color,
-    bg: Option<Color>,
-    msg: impl Into<Msg>,
-) {
-    let radius = (h(rect) / 4.0).min(RADIUS_SM + 1.0);
-    if let Some(bg) = bg {
-        v.rect(rect, radius, bg);
-    }
-    v.text(rect, label, size, fg, Align::Center);
-    v.button(rect, radius, msg, t.hover);
-}
-
-/// 文字按鈕（填色或外框）。`msg` 為 `None` 時停用。
-#[allow(clippy::too_many_arguments)]
-pub fn text_button(
-    v: &mut View,
-    t: &Theme,
-    rect: Rect<Logical>,
-    label: &str,
-    size: f32,
-    fg: Color,
-    bg: Color,
-    border: Option<Color>,
-    msg: Option<Msg>,
-) {
-    match border {
-        Some(b) => v.bordered(rect, RADIUS_SM, bg, 1.0, b),
-        None => v.rect(rect, RADIUS_SM, bg),
-    };
-    v.text(rect, label, size, fg, Align::Center);
-    if let Some(msg) = msg {
-        v.button(rect, RADIUS_SM, msg, t.hover);
-    }
-}
-
-/// 膠囊 chip，回傳寬度。
-#[allow(clippy::too_many_arguments)]
-pub fn chip(
-    v: &mut View,
-    cx: &mut Ctx<'_>,
-    x0: f32,
-    y0: f32,
-    height: f32,
-    icon: &str,
-    label: &str,
-    active: bool,
-    accent: Color,
-    msg: impl Into<Msg>,
-) -> f32 {
-    let t = cx.t;
-    let content = if icon.is_empty() {
-        label.to_string()
-    } else {
-        format!("{icon} {label}")
-    };
-    let width = cx.text.measure_width(&content, FONT_XS, active) + 18.0;
-    let rect = r(x0, y0, width, height);
-    v.rect(
-        rect,
-        height / 2.0,
-        if active { t.chip_bg_active } else { t.chip_bg },
-    );
-    v.styled_text(
-        rect,
-        content,
-        FONT_XS,
-        active,
-        if active { accent } else { t.text },
-        Align::Center,
-    );
-    v.button(rect, height / 2.0, msg, t.hover);
-    width
-}
-
-/// 開關（44×24）。舊名稱；新程式碼請用 [`toggle`]（開啟一律為 accent 藍）。
-pub fn switch(v: &mut View, t: &Theme, rect: Rect<Logical>, on: bool, msg: impl Into<Msg>) {
-    toggle(v, t, rect, on, Some(msg.into()));
-}
-
-/// 分段選擇；回傳總寬度。
-#[allow(clippy::too_many_arguments)]
-pub fn segmented(
-    v: &mut View,
-    t: &Theme,
-    x0: f32,
-    y0: f32,
-    seg_w: f32,
-    seg_h: f32,
-    options: &[(&str, &str)],
-    selected: &str,
-    enabled: bool,
-    make: impl Fn(&str) -> Msg,
-) -> f32 {
-    let mut cx = x0;
-    for (id, label) in options {
-        let active = *id == selected;
-        let rect = r(cx, y0, seg_w, seg_h);
-        v.bordered(
-            rect,
-            RADIUS_SM,
-            if active { t.accent } else { t.bg3 },
-            1.0,
-            if active { t.accent } else { t.border },
-        );
-        v.text(
-            rect,
-            *label,
-            FONT_XS,
-            if active { t.on_accent } else { t.text2 },
-            Align::Center,
-        );
-        if enabled && !active {
-            v.button(rect, RADIUS_SM, make(id), t.hover);
-        }
-        cx += seg_w + 4.0;
-    }
-    cx - x0 - 4.0
 }
 
 /// 滑桿（自繪拖曳控制）。
@@ -296,47 +171,6 @@ pub fn progress(v: &mut View, t: &Theme, rect: Rect<Logical>, frac: f32, color: 
     if frac > 0.0 {
         v.rect(r(x(rect), y(rect), w(rect) * frac, h(rect)), radius, color);
     }
-}
-
-/// 區段標題（32 高），回傳高度。
-pub fn section_header(v: &mut View, t: &Theme, x0: f32, y0: f32, width: f32, title: &str) -> f32 {
-    v.rect(r(x0, y0 + 31.0, width, 1.0), 0.0, t.border);
-    v.bold_text(
-        r(x0, y0, width, 32.0),
-        title,
-        FONT_XS,
-        t.text2,
-        Align::Start,
-    );
-    32.0
-}
-
-/// 列標籤（垂直置中）。
-pub fn row_label(v: &mut View, t: &Theme, x0: f32, y0: f32, width: f32, height: f32, label: &str) {
-    v.text(
-        r(x0, y0, width, height),
-        label,
-        FONT_SM,
-        t.text,
-        Align::Start,
-    );
-}
-
-/// 「標籤 + 右側開關」列（40 高），回傳高度。
-#[allow(clippy::too_many_arguments)]
-pub fn toggle_row(
-    v: &mut View,
-    t: &Theme,
-    x0: f32,
-    y0: f32,
-    width: f32,
-    label: &str,
-    on: bool,
-    msg: impl Into<Msg>,
-) -> f32 {
-    row_label(v, t, x0, y0, width - 50.0, 40.0, label);
-    switch(v, t, r(x0 + width - 44.0, y0, 44.0, 40.0), on, msg);
-    40.0
 }
 
 /// 單行文字輸入框（acme-textinput 狀態 + 自繪；含選取、輸入法組字底線與游標）。
@@ -510,11 +344,12 @@ pub fn waveform(
             0.0
         };
         let bh = (level * max_h).max(min_h);
+        // 錄音中的表面是紅色系：較小的音量用半透明紅，峰值用實心紅。
         let color = if recording {
             if level > 0.6 {
-                t.wave_tip
+                t.recording
             } else {
-                t.accent
+                with_alpha(t.recording, 0.55)
             }
         } else {
             t.placeholder
@@ -547,15 +382,15 @@ pub fn record_button(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
             t.recording_pulse,
         );
     }
-    v.rect(
-        rect,
-        d / 2.0,
-        if s.is_recording {
-            t.recording
-        } else {
-            t.accent
-        },
-    );
+    let idle = !s.is_recording && !s.is_processing;
+    if s.is_recording {
+        v.rect(rect, d / 2.0, t.recording);
+    } else if s.is_processing {
+        v.rect(rect, d / 2.0, t.accent);
+    } else {
+        // 閒置：bg2 圓盤 + 1.5px border_strong 外圈，中間紅點（與標題列的 logo 區分）。
+        v.bordered(rect, d / 2.0, t.bg2, 1.5, t.border_strong);
+    }
     let c = (x(rect) + d / 2.0, y(rect) + d / 2.0);
     if s.is_processing && !s.is_recording {
         for i in 0..3 {
@@ -572,16 +407,16 @@ pub fn record_button(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
                 if lit {
                     t.on_accent
                 } else {
-                    crate::ui_acme::theme::with_alpha(t.on_accent, 0.5)
+                    with_alpha(t.on_accent, 0.5)
                 },
             );
         }
     } else if s.is_recording {
         let q = d * 0.32;
         v.rect(r(c.0 - q / 2.0, c.1 - q / 2.0, q, q), 3.0, t.on_accent);
-    } else {
+    } else if idle {
         let q = d * 0.36;
-        v.rect(r(c.0 - q / 2.0, c.1 - q / 2.0, q, q), q / 2.0, t.on_accent);
+        v.rect(r(c.0 - q / 2.0, c.1 - q / 2.0, q, q), q / 2.0, t.recording);
     }
     let enabled = s.is_recording || !s.is_processing;
     if enabled {
@@ -612,7 +447,8 @@ pub enum Btn {
     Danger,
 }
 
-/// 文字按鈕（可帶圖示）。`msg = None` 為停用：`bg3` 底、`placeholder` 字、無邊框。
+/// 文字按鈕（可帶圖示）。`msg = None` 為停用：`bg3` 底、`placeholder` 字、無邊框；
+/// Ghost 停用時維持透明底，只把字換成 `placeholder`。
 #[allow(clippy::too_many_arguments)]
 pub fn btn(
     v: &mut View,
@@ -626,7 +462,11 @@ pub fn btn(
     let t = cx.t;
     let enabled = msg.is_some();
     let (bg, border, fg) = if !enabled {
-        (t.bg3, None, t.placeholder)
+        if kind == Btn::Ghost {
+            (Color::TRANSPARENT, None, t.placeholder)
+        } else {
+            (t.bg3, None, t.placeholder)
+        }
     } else {
         match kind {
             Btn::Primary => (t.accent, None, t.on_accent),
@@ -980,22 +820,40 @@ pub fn setting_row(
     if divider {
         v.rect(r(g.x + pad, y0, g.w - pad, 1.0), 0.0, t.border);
     }
+    let title_color = if enabled { t.text } else { t.placeholder };
+    let hint = hint.filter(|h| !h.is_empty());
+    let Some(hint) = hint else {
+        v.text(
+            r(text_x, y0, text_w, ROW_H - 4.0),
+            title,
+            FONT_SM,
+            title_color,
+            Align::Start,
+        );
+        let control = r(
+            g.x + g.w - pad - ctrl_w,
+            y0 + (ROW_H - CTRL_MD) / 2.0,
+            ctrl_w,
+            CTRL_MD,
+        );
+        return (ROW_H, control);
+    };
+    // 有說明：上距 10 + 標題 18 + 2 + 說明 + 下距 10；控制區對齊標題那一行的中線。
+    let title_top = y0 + HINT_ROW_PAD;
     v.text(
-        r(text_x, y0, text_w, ROW_H - 4.0),
+        r(text_x, title_top, text_w, HINT_TITLE_H),
         title,
         FONT_SM,
-        if enabled { t.text } else { t.placeholder },
+        title_color,
         Align::Start,
     );
-    let mut height = ROW_H;
-    if let Some(hint) = hint.filter(|h| !h.is_empty()) {
-        let hint_h = cx.text.measure_wrapped(hint, FONT_XS, text_w).max(FONT_XS);
-        v.wrapped(r(text_x, y0 + 34.0, text_w, hint_h), hint, FONT_XS, t.text2);
-        height += hint_h + 8.0;
-    }
+    let hint_y = title_top + HINT_TITLE_H + 2.0;
+    let hint_h = cx.text.measure_wrapped(hint, FONT_XS, text_w).max(FONT_XS);
+    v.wrapped(r(text_x, hint_y, text_w, hint_h), hint, FONT_XS, t.text2);
+    let height = HINT_ROW_PAD + HINT_TITLE_H + 2.0 + hint_h + HINT_ROW_PAD;
     let control = r(
         g.x + g.w - pad - ctrl_w,
-        y0 + (ROW_H - CTRL_MD) / 2.0,
+        title_top + HINT_TITLE_H / 2.0 - CTRL_MD / 2.0,
         ctrl_w,
         CTRL_MD,
     );
