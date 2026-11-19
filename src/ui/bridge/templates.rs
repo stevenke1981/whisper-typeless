@@ -29,6 +29,7 @@ async fn load_templates_from_disk() -> Vec<ContextTemplate> {
         }
     }
     let registry = TemplateRegistry::new();
+    // 以穩定 id 為鍵的 registry；UI 仍以顯示名稱呈現
     registry.all().into_iter().cloned().collect()
 }
 

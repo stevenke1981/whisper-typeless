@@ -156,6 +156,49 @@ mod tests {
         assert!(result.is_err());
     }
 
+    const MINI_CATALOG: &str = r#"{"models":[{"id":"tiny","display_name":"Tiny","size":{"disk_mb":75,"vram_mb":390},"speed_multiplier":10.0,"quality_stars":1,"is_english_only":false,"sha1":"abc123","download_url":"https://example.invalid/tiny.bin"}]}"#;
+
+    #[test]
+    fn parse_catalog_minimal_entry() {
+        let models = ModelRegistry::parse_catalog(MINI_CATALOG).unwrap();
+        assert_eq!(models.len(), 1);
+        let m = &models[0];
+        assert_eq!(m.id, "tiny");
+        assert_eq!(m.size.disk_mb, 75);
+        assert!(m.mirror_urls.is_empty());
+        assert!(!m.is_downloaded);
+        assert!(m.local_path.is_none());
+    }
+
+    #[test]
+    fn parse_catalog_sha1_alias_fills_sha256() {
+        let models = ModelRegistry::parse_catalog(MINI_CATALOG).unwrap();
+        assert_eq!(models[0].sha256, "abc123");
+    }
+
+    #[test]
+    fn parse_catalog_missing_field_errors() {
+        assert!(ModelRegistry::parse_catalog(r#"{"models":[{"id":"x"}]}"#).is_err());
+        assert!(ModelRegistry::parse_catalog("{}").is_err());
+    }
+
+    #[test]
+    fn parse_catalog_empty_models() {
+        assert!(ModelRegistry::parse_catalog(r#"{"models":[]}"#)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn embedded_catalog_ids_unique() {
+        let models = ModelRegistry::parse_catalog(EMBEDDED_MODEL_CATALOG).unwrap();
+        let mut ids: Vec<_> = models.iter().map(|m| m.id.clone()).collect();
+        ids.sort();
+        let n = ids.len();
+        ids.dedup();
+        assert_eq!(n, ids.len());
+    }
+
     #[test]
     fn model_id_candidate_filenames() {
         use crate::models::ModelId;

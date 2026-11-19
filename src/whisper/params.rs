@@ -113,6 +113,52 @@ mod tests {
     }
 
     #[test]
+    fn params_full_roundtrip_non_default() {
+        let p = WhisperParams {
+            language: None,
+            strategy: DecodingStrategy::BeamSearch,
+            beam_size: 8,
+            initial_prompt: Some("提示".into()),
+            temperature: 0.4,
+            use_gpu: false,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let r: WhisperParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(r.language, None);
+        assert_eq!(r.strategy, DecodingStrategy::BeamSearch);
+        assert_eq!(r.beam_size, 8);
+        assert_eq!(r.initial_prompt.as_deref(), Some("提示"));
+        assert!(!r.use_gpu);
+        assert!((r.temperature - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn params_default_misc_values() {
+        let p = WhisperParams::default();
+        assert!(!p.translate);
+        assert!(p.initial_prompt.is_none());
+        assert_eq!(p.beam_size, 5);
+        assert_eq!(p.best_of, 5);
+        assert_eq!(p.gpu_device, 0);
+    }
+
+    #[test]
+    fn params_missing_field_is_error() {
+        assert!(serde_json::from_str::<WhisperParams>("{}").is_err());
+    }
+
+    #[test]
+    fn decoding_strategy_serde_names() {
+        assert_eq!(
+            serde_json::to_string(&DecodingStrategy::BeamSearch).unwrap(),
+            "\"BeamSearch\""
+        );
+        let s: DecodingStrategy = serde_json::from_str("\"Greedy\"").unwrap();
+        assert_eq!(s, DecodingStrategy::Greedy);
+    }
+
+    #[test]
     fn params_strategy_default_is_greedy() {
         assert_eq!(DecodingStrategy::default(), DecodingStrategy::Greedy);
     }
