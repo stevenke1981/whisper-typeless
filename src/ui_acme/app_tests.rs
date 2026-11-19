@@ -439,7 +439,10 @@ fn privacy_toggle_in_settings() {
         680.0,
         is_click(Msg::Core(UiCommand::SetPrivacyMode(true))),
     );
-    assert_eq!(app.sent, vec![UiCommand::SetPrivacyMode(true)]);
+    assert_eq!(
+        app.sent,
+        vec![UiCommand::SetPrivacyMode(true), UiCommand::SaveSettings]
+    );
     assert!(app.state().privacy_mode);
 }
 
@@ -619,13 +622,22 @@ fn slider_press_and_drag_update_settings() {
         y,
     });
     assert_eq!(app.state().vad_threshold, 0.9);
-    app.event(button(false, end, y));
-    assert!(app.slider.is_none());
+    assert!(app.sent.len() >= 2);
+    // 拖曳中只改狀態，不寫檔
     assert!(app
         .sent
         .iter()
         .all(|c| matches!(c, UiCommand::UpdateSettings(_))));
-    assert!(app.sent.len() >= 2);
+    app.event(button(false, end, y));
+    assert!(app.slider.is_none());
+    // 放開後寫檔一次
+    assert_eq!(app.sent.last(), Some(&UiCommand::SaveSettings));
+    let saves = app
+        .sent
+        .iter()
+        .filter(|c| **c == UiCommand::SaveSettings)
+        .count();
+    assert_eq!(saves, 1);
 }
 
 #[test]
@@ -644,6 +656,8 @@ fn stepper_changes_threads_and_reapplies() {
     assert_eq!(app.state().n_threads, 5);
     assert!(matches!(app.sent[0], UiCommand::UpdateSettings(_)));
     assert_eq!(app.sent[1], UiCommand::SettingsChanged);
+    assert_eq!(app.sent[2], UiCommand::SaveSettings);
+    assert_eq!(app.sent.len(), 3);
 }
 
 // ─── 文字框 + 輸入法 ─────────────────────────────────────────────────────────
@@ -697,10 +711,16 @@ fn hotkey_field_typing_ime_and_blur() {
     assert_eq!(app.state().hotkey, "F9鍵");
     assert!(!app.sent.contains(&UiCommand::SettingsChanged));
 
-    // Enter 送出：失去焦點並重新套用熱鍵
+    assert!(!app.sent.contains(&UiCommand::SaveSettings), "打字中不寫檔");
+
+    // Enter 送出：失去焦點、重新套用熱鍵並寫檔
     app.event(key(PlatformKey::Enter, None));
     assert_eq!(app.local().focus, None);
-    assert_eq!(app.sent.last(), Some(&UiCommand::SettingsChanged));
+    let n = app.sent.len();
+    assert_eq!(
+        app.sent[n - 2..],
+        [UiCommand::SettingsChanged, UiCommand::SaveSettings]
+    );
     app.build_scene(560.0, 680.0, 1.0).unwrap();
     assert!(app.ime_cursor_area(WindowId(0)).is_none());
     let reqs = app.take_window_requests(WindowId(0));
@@ -1063,4 +1083,175 @@ fn new_setting_edits_reach_core_state() {
     let s = app.state();
     assert!(!s.close_to_tray && s.start_minimized && !s.append_newline);
     assert!(!app.sent.contains(&UiCommand::SettingsChanged));
+}
+
+// ─── WP-1b：即改即存、視窗快捷鍵、快捷鍵錄入 ─────────────────────────────────
+
+fn ctrl_key(k: PlatformKey, ch: &str, shift: bool) -> PlatformEvent {
+    PlatformEvent::Key {
+        window: WindowId(0),
+        key: k,
+        pressed: true,
+        shift,
+        ctrl: true,
+        alt: false,
+        meta: false,
+        repeat: false,
+        text: None,
+        character: Some(ch.to_string()),
+    }
+}
+
+#[test]
+fn toggles_and_direct_setting_commands_save_immediately() {
+    let mut app = app();
+    app.dispatch(Msg::Setting(SettingEdit::PttMode(true)));
+    assert_eq!(app.sent.last(), Some(&UiCommand::SaveSettings));
+    assert_eq!(
+        app.sent.len(),
+        3,
+        "UpdateSettings, SettingsChanged, SaveSettings"
+    );
+
+    for cmd in [
+        UiCommand::SetDarkMode(true),
+        UiCommand::SetClipboardEnabled(false),
+        UiCommand::SetInjectEnabled(false),
+        UiCommand::SetPrivacyMode(true),
+    ] {
+        app.sent.clear();
+        app.dispatch(Msg::Core(cmd.clone()));
+        assert_eq!(app.sent, vec![cmd, UiCommand::SaveSettings]);
+    }
+    let snap = app.state().ui_settings();
+    assert!(snap.dark_mode && snap.privacy_mode);
+    assert!(!snap.clipboard_enabled && !snap.inject_enabled);
+
+    // 舊畫面直接送整份快照（系統匣開關）也會寫檔
+    app.sent.clear();
+    let mut snap = app.state().ui_settings();
+    snap.close_to_tray = !snap.close_to_tray;
+    app.dispatch(Msg::Core(UiCommand::UpdateSettings(Box::new(snap))));
+    assert_eq!(app.sent.last(), Some(&UiCommand::SaveSettings));
+
+    // 非設定指令不寫檔
+    app.sent.clear();
+    app.dispatch(Msg::Core(UiCommand::SetFileMode(true)));
+    app.dispatch(Msg::Core(UiCommand::ClearTranscript));
+    assert!(!app.sent.contains(&UiCommand::SaveSettings));
+}
+
+#[test]
+fn dark_mode_survives_save_and_reload() {
+    let mut app = app();
+    app.dispatch(Msg::Core(UiCommand::SetDarkMode(true)));
+    let saved = app.state().ui_settings();
+    let mut config = AppConfig::default();
+    saved.apply_to(&mut config);
+    assert_eq!(config.general.theme, "dark");
+    let loaded = UiSettings::from_config(&config);
+    assert!(loaded.dark_mode);
+    let mut fresh = self::app();
+    fresh.dispatch(Msg::Core(UiCommand::UpdateSettings(Box::new(loaded))));
+    assert!(fresh.state().dark_mode);
+}
+
+#[test]
+fn hotkey_blur_without_edit_does_not_save() {
+    let mut app = app();
+    app.ui.focus = Some(FieldId::PttHotkey);
+    app.dispatch(Msg::SettingsTab(SettingsTab::Output));
+    assert_eq!(app.sent, vec![UiCommand::SettingsChanged]);
+}
+
+#[test]
+fn ctrl_comma_toggles_settings_and_resets_tab() {
+    let mut app = app();
+    app.ui.settings_tab = SettingsTab::Advanced;
+    app.ui.set_scroll(ScrollId::Settings, 200.0);
+    assert!(app.event(ctrl_key(PlatformKey::Other, ",", false)));
+    assert!(app.state().settings_open);
+    assert_eq!(
+        app.local().settings_tab,
+        SettingsTab::General,
+        "開啟回到一般"
+    );
+    assert_eq!(app.local().scroll(ScrollId::Settings), 0.0);
+    app.event(ctrl_key(PlatformKey::Other, ",", false));
+    assert!(!app.state().settings_open);
+    assert!(!app.pending_requests().contains(&WindowRequest::Focus));
+}
+
+#[test]
+fn gear_reopens_settings_on_general_tab() {
+    let mut app = app();
+    app.dispatch(Msg::OpenSettings(SettingsTab::Models));
+    app.dispatch(Msg::ToggleSettings);
+    assert!(!app.state().settings_open);
+    assert_eq!(
+        app.local().settings_tab,
+        SettingsTab::Models,
+        "關閉不改分頁"
+    );
+    app.dispatch(Msg::ToggleSettings);
+    assert!(app.state().settings_open);
+    assert_eq!(app.local().settings_tab, SettingsTab::General);
+}
+
+#[test]
+fn ctrl_digits_switch_mode_or_settings_tab() {
+    let mut app = app();
+    app.event(ctrl_key(PlatformKey::Other, "2", false));
+    assert!(app.state().file_mode);
+    app.event(ctrl_key(PlatformKey::Other, "1", false));
+    assert!(!app.state().file_mode);
+    assert!(!app.event(ctrl_key(PlatformKey::Other, "5", false)));
+
+    app.dispatch(Msg::ToggleSettings);
+    for (i, tab) in SettingsTab::ALL.into_iter().enumerate() {
+        let digit = (i + 1).to_string();
+        app.event(ctrl_key(PlatformKey::Other, &digit, false));
+        assert_eq!(app.local().settings_tab, tab);
+    }
+    assert!(!app.state().file_mode, "設定開啟時 Ctrl+2 只切分頁");
+}
+
+#[test]
+fn window_shortcuts_ignored_while_text_field_focused() {
+    let mut app = app();
+    app.ui.focus = Some(FieldId::TemplateName);
+    app.ui.fields.template_name.focused = true;
+    app.event(ctrl_key(PlatformKey::Other, ",", false));
+    app.event(ctrl_key(PlatformKey::Other, "2", false));
+    assert!(!app.state().settings_open);
+    assert!(!app.state().file_mode);
+}
+
+#[test]
+fn hotkey_field_captures_pressed_combo() {
+    let mut app = app_with(AppViewState {
+        settings_open: true,
+        ..AppViewState::default()
+    })
+    .0;
+    app.ui.focus = Some(FieldId::Hotkey);
+    app.ui.fields.hotkey.focused = true;
+    app.event(ctrl_key(PlatformKey::Other, "K", true));
+    assert_eq!(app.state().hotkey, "Ctrl+Shift+K");
+    assert_eq!(app.local().fields.hotkey.text, "Ctrl+Shift+K");
+    assert!(
+        !app.sent.contains(&UiCommand::SettingsChanged),
+        "失焦才重新註冊"
+    );
+    // 單純 Ctrl+A 仍是全選，不錄入
+    app.event(ctrl_key(PlatformKey::Other, "a", false));
+    assert_eq!(app.state().hotkey, "Ctrl+Shift+K");
+    // 單獨的 F 鍵也能錄入；設定開啟中的 Ctrl+2 被錄成熱鍵而不是切分頁
+    app.event(key(PlatformKey::Function(9), None));
+    assert_eq!(app.state().hotkey, "F9");
+    app.event(ctrl_key(PlatformKey::Other, "2", false));
+    assert_eq!(app.state().hotkey, "Ctrl+2");
+    assert_eq!(app.local().settings_tab, SettingsTab::General);
+    app.event(key(PlatformKey::Enter, None));
+    assert_eq!(app.sent.last(), Some(&UiCommand::SaveSettings));
 }
