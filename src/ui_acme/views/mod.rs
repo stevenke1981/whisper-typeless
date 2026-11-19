@@ -18,7 +18,7 @@ use crate::core::AppViewState;
 
 /// 視窗尺寸（邏輯像素），與 Slint 版一致。
 pub const FULL_W: f32 = 560.0;
-pub const FULL_H: f32 = 680.0;
+pub const FULL_H: f32 = 620.0;
 pub const BAR_W: f32 = 380.0;
 pub const BAR_H: f32 = 52.0;
 pub const EXPANDED_H: f32 = 540.0;

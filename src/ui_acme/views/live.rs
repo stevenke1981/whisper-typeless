@@ -6,10 +6,10 @@ use super::widgets::{
     chip, icon_button, record_button, waveform, FONT_MD, FONT_SM, FONT_XS, RADIUS_MD, RADIUS_SM,
 };
 use super::{file, template_label, Ctx, BAR_H, TEMPLATES};
-use crate::core::UiCommand;
+use crate::core::{AppViewState, UiCommand};
 use crate::ui_acme::msg::{Msg, ScrollId};
 use crate::ui_acme::paint::{r, View};
-use crate::ui_acme::text::Align;
+use crate::ui_acme::text::{Align, TextEngine};
 
 fn rx(rect: Rect<Logical>) -> (f32, f32, f32, f32) {
     (
@@ -640,55 +640,190 @@ fn control_bar(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
     }
 }
 
-/// 狀態列：狀態文字、字數、模型、裝置、熱鍵。
-fn status_bar(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
-    let t = cx.t;
-    let s = cx.s;
-    let (x0, y0, w, h) = rx(rect);
-    v.rect(rect, 0.0, t.bg);
-    let mut pieces = vec![
-        (format!("已辨識 {} 字", s.char_count), t.text2),
-        (s.model_name.clone(), t.accent),
+/// 狀態列項目的色調。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Tone {
+    Dim,
+    Accent,
+    Recording,
+}
+
+/// 已排版的狀態列項目：`x` 相對於狀態列左緣，`w` 為寬度。
+#[derive(Clone, Debug)]
+pub(super) struct StatusItem {
+    pub label: String,
+    pub tone: Tone,
+    pub x: f32,
+    pub w: f32,
+}
+
+/// 狀態列排版結果：右側的資訊項目與左側（省略後的）狀態文字。
+#[derive(Clone, Debug, Default)]
+pub(super) struct StatusLayout {
+    pub items: Vec<StatusItem>,
+    pub status: String,
+    pub status_x: f32,
+    pub status_w: f32,
+}
+
+const STATUS_PAD: f32 = 12.0;
+const STATUS_GAP: f32 = 10.0;
+const STATUS_MIN_TEXT: f32 = 56.0;
+
+/// 把裝置標籤縮短（"CPU (需要 cuda 特性)" → "CPU"，"GPU (CUDA)" → "CUDA"）。
+pub(super) fn short_device(label: &str) -> String {
+    if label.starts_with("CPU") {
+        "CPU".into()
+    } else if label.contains("CUDA") {
+        "CUDA".into()
+    } else if label.contains("Metal") {
+        "Metal".into()
+    } else {
+        label.split(" (").next().unwrap_or(label).to_string()
+    }
+}
+
+/// 在 `width` 內排版狀態列。資訊項目依優先順序（最後才捨棄：模型 > 裝置 > 熱鍵 >
+/// 字數 > PTT 熱鍵）捨棄；仍放不下時將唯一剩下的項目省略；狀態文字取剩餘空間。
+pub(super) fn status_layout(text: &mut TextEngine, s: &AppViewState, width: f32) -> StatusLayout {
+    // 顯示順序：字數、模型、裝置、熱鍵、PTT；drop_rank 越小越先捨棄。
+    let mut pieces: Vec<(String, Tone, u8)> = vec![
+        (format!("{} 字", s.char_count), Tone::Dim, 1),
+        (s.model_name.clone(), Tone::Accent, 4),
         (
-            s.device_label.clone(),
-            if s.device_label == "CPU" {
-                t.text2
+            short_device(&s.device_label),
+            if s.device_label.starts_with("CPU") {
+                Tone::Dim
             } else {
-                t.recording
+                Tone::Recording
             },
+            3,
         ),
-        (format!("⌨ {}", s.hotkey), t.text2),
+        (s.hotkey.clone(), Tone::Dim, 2),
     ];
     if s.ptt_mode {
-        pieces.push((format!("🎤 {}", s.ptt_hotkey), t.recording));
+        pieces.push((format!("🎤 {}", s.ptt_hotkey), Tone::Recording, 0));
     }
-    let gap = 10.0;
-    let mut x = x0 + w - 12.0;
-    for (i, (label, color)) in pieces.iter().enumerate().rev() {
-        let lw = cx.text.measure_width(label, FONT_XS, false);
-        x -= lw;
+    let avail = (width - STATUS_PAD * 2.0).max(0.0);
+    let mut widths: Vec<f32> = pieces
+        .iter()
+        .map(|(l, _, _)| text.measure_width(l, FONT_XS, false))
+        .collect();
+    let total = |pieces: &[(String, Tone, u8)], widths: &[f32]| -> f32 {
+        let n = pieces.len() as f32;
+        widths.iter().sum::<f32>() + (n - 1.0).max(0.0) * STATUS_GAP
+    };
+    while pieces.len() > 1 && total(&pieces, &widths) + STATUS_GAP + STATUS_MIN_TEXT > avail {
+        let Some(idx) = (0..pieces.len()).min_by_key(|&i| pieces[i].2) else {
+            break;
+        };
+        pieces.remove(idx);
+        widths.remove(idx);
+    }
+    if pieces.len() == 1 && widths[0] > avail {
+        let label = text.elide(&pieces[0].0, FONT_XS, false, avail);
+        widths[0] = text.measure_width(&label, FONT_XS, false).min(avail);
+        pieces[0].0 = label;
+    }
+    let mut items = Vec::with_capacity(pieces.len());
+    let mut x = width - STATUS_PAD - total(&pieces, &widths);
+    for ((label, tone, _), w) in pieces.into_iter().zip(widths) {
+        items.push(StatusItem { label, tone, x, w });
+        x += w + STATUS_GAP;
+    }
+    let first_x = items.first().map_or(width - STATUS_PAD, |i| i.x);
+    let status_w = (first_x - STATUS_PAD - STATUS_GAP).max(0.0);
+    let status = text.elide(&s.status_text, FONT_XS, false, status_w);
+    StatusLayout {
+        items,
+        status,
+        status_x: STATUS_PAD,
+        status_w,
+    }
+}
+
+/// 狀態列：狀態文字、字數、模型、裝置、熱鍵（放不下時依序捨棄 / 省略）。
+fn status_bar(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
+    let t = cx.t;
+    let (x0, y0, w, h) = rx(rect);
+    v.rect(rect, 0.0, t.bg);
+    let layout = status_layout(cx.text, cx.s, w);
+    for (i, item) in layout.items.iter().enumerate() {
+        let color = match item.tone {
+            Tone::Dim => t.text2,
+            Tone::Accent => t.accent,
+            Tone::Recording => t.recording,
+        };
         v.text(
-            r(x, y0, lw + 1.0, h),
-            label.clone(),
+            r(x0 + item.x, y0, item.w + 1.0, h),
+            item.label.clone(),
             FONT_XS,
-            *color,
+            color,
             Align::Start,
         );
         if i > 0 {
-            x -= gap / 2.0;
-            if i >= 2 {
-                v.rect(r(x, y0 + 6.0, 1.0, 12.0), 0.0, t.border);
-            }
-            x -= gap / 2.0;
+            v.rect(
+                r(x0 + item.x - STATUS_GAP / 2.0, y0 + 6.0, 1.0, 12.0),
+                0.0,
+                t.border,
+            );
         }
     }
-    let status_w = (x - x0 - 12.0 - gap).max(0.0);
-    let status = cx.text.elide(&s.status_text, FONT_XS, false, status_w);
     v.text(
-        r(x0 + 12.0, y0, status_w, h),
-        status,
+        r(x0 + layout.status_x, y0, layout.status_w, h),
+        layout.status,
         FONT_XS,
         t.text2,
         Align::Start,
     );
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    fn state(model: &str, ptt: bool) -> AppViewState {
+        AppViewState {
+            model_name: model.into(),
+            device_label: "CPU (需要 cuda 特性)".into(),
+            hotkey: "Ctrl+Shift+W".into(),
+            ptt_hotkey: "Ctrl+Alt+L".into(),
+            ptt_mode: ptt,
+            char_count: 12345,
+            status_text: "就緒，按下錄音鍵或快捷鍵開始說話這是一段很長很長的狀態文字".into(),
+            ..AppViewState::default()
+        }
+    }
+
+    #[test]
+    fn short_device_labels() {
+        assert_eq!(short_device("CPU (需要 cuda 特性)"), "CPU");
+        assert_eq!(short_device("CPU"), "CPU");
+        assert_eq!(short_device("GPU (CUDA)"), "CUDA");
+        assert_eq!(short_device("GPU (Metal)"), "Metal");
+    }
+
+    #[test]
+    fn status_items_fit_window_width() {
+        let mut text = TextEngine::new();
+        for width in [560.0_f32, 380.0, 300.0, 200.0] {
+            for model in ["small", "ggml-large-v3-turbo-q5_0 (1.5 GB)"] {
+                for ptt in [false, true] {
+                    let s = state(model, ptt);
+                    let l = status_layout(&mut text, &s, width);
+                    let mut right = 0.0_f32;
+                    for it in &l.items {
+                        assert!(it.x >= 0.0, "{width}: x {} < 0", it.x);
+                        assert!(it.x + it.w <= width + 0.01, "{width}: {it:?} overflows");
+                        right = right.max(it.x + it.w);
+                    }
+                    assert!(right <= width + 0.01);
+                    assert!(l.status_x + l.status_w <= width + 0.01);
+                    if let Some(first) = l.items.first() {
+                        assert!(l.status_x + l.status_w <= first.x + 0.01, "text overlaps");
+                    }
+                }
+            }
+        }
+    }
 }

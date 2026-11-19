@@ -871,7 +871,7 @@ fn transcript_scroll_unfollows_and_refollows() {
 fn window_config_follows_mode_and_is_borderless() {
     let cfg = app().window_config();
     assert!(!cfg.decorations);
-    assert_eq!((cfg.width, cfg.height), (560.0, 680.0));
+    assert_eq!((cfg.width, cfg.height), (560.0, 620.0));
     let floating = app_with(AppViewState {
         floating_mode: true,
         ..AppViewState::default()
