@@ -2,6 +2,28 @@
 
 本檔案格式參考 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 [語意化版本](https://semver.org/lang/zh-TW/)。
 
+## [0.4.0] - 2026-11-19
+
+### Added
+
+- 預設 GUI 改為 AcmeUI-Native（Rust 原生介面，預設 CPU 軟體渲染）。
+- 命令列參數 `--ui acme|slint`；`--acme-shell` 保留為 `--ui acme` 的別名。
+- UI 無關的核心（`src/core/`）：`AppViewState`、`UiCommand`、`CoreEvent`、`Controller`；畫面層只透過這些型別與核心溝通。
+- 環境變數 `ACME_RENDER_BACKEND`（`cpu`、`gpu`、`auto`）可覆寫 AcmeUI 的渲染後端。
+
+### Changed
+
+- Slint 畫面層精簡為薄轉接層（`src/ui/`），業務邏輯移至 `src/core/`。
+- AcmeUI-Native 相依以固定 git rev（`c2e0fd9`）引用。
+
+### Fixed
+
+- 修正 `SHA256SUMS.txt` 以 CRLF 寫入的問題，改為 LF，`sha256sum -c` 可直接驗證。
+
+### Deprecated
+
+- Slint 介面（`--ui slint`）為本版備援，將於下一版移除。
+
 ## [0.3.0] - 2026-11-19
 
 ### Added
