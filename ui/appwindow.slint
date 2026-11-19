@@ -85,6 +85,8 @@ export component AppWindow inherits Window {
     in-out property <float> temperature: 0.0;
     in-out property <string> conversion-mode: "zh-TW";
     in-out property <bool> append-newline: true;
+    // 隱私模式：不保留錄音檔、輸出後清除剪貼簿（持久化至 config.toml [output].privacy_mode）
+    in-out property <bool> privacy-mode: false;
 
     in-out property <string> hotkey: "Ctrl+Shift+W";
     in-out property <string> ptt-hotkey: "Ctrl+Alt+L";
@@ -925,6 +927,7 @@ export component AppWindow inherits Window {
         temperature <=> root.temperature;
         conversion-mode <=> root.conversion-mode;
         append-newline <=> root.append-newline;
+        privacy-mode <=> root.privacy-mode;
         hotkey <=> root.hotkey;
         ptt-hotkey <=> root.ptt-hotkey;
         ptt-mode <=> root.ptt-mode;

@@ -162,9 +162,11 @@ pub fn setup_recording_callbacks(
                     }
                 };
 
-                // 讀取輸出設定（從 UI 讀取當前狀態）
-                let privacy_mode = cfg.output.privacy_mode;
+                // 讀取輸出設定（從 UI 讀取當前狀態；UI 為設定的即時快照）
                 let (
+                    privacy_mode,
+                    vad_threshold,
+                    vad_timeout,
                     clipboard_on,
                     inject_on,
                     ui_use_gpu,
@@ -176,6 +178,9 @@ pub fn setup_recording_callbacks(
                     .upgrade()
                     .map(|ui| {
                         (
+                            ui.get_privacy_mode(),
+                            ui.get_vad_threshold(),
+                            ui.get_silence_timeout().max(0.0).round() as u64,
                             ui.get_clipboard_enabled(),
                             ui.get_inject_enabled(),
                             ui.get_use_gpu(),
@@ -185,7 +190,23 @@ pub fn setup_recording_callbacks(
                             ui.get_conversion_mode().to_string(),
                         )
                     })
-                    .unwrap_or((true, true, true, 4, 0.0, true, "zh-TW".to_string()));
+                    .unwrap_or_else(|| {
+                        (
+                            cfg.output.privacy_mode,
+                            cfg.audio.vad_threshold,
+                            cfg.audio.vad_silence_timeout_ms,
+                            true,
+                            true,
+                            cfg.whisper.use_gpu,
+                            cfg.whisper.n_threads,
+                            cfg.whisper.temperature,
+                            cfg.modules.opencc,
+                            crate::settings::ui_settings::conversion_mode_to_str(
+                                &cfg.chinese.conversion,
+                            )
+                            .to_string(),
+                        )
+                    });
 
                 let stop_flag = Arc::new(AtomicBool::new(false));
                 let stop_flag_thread = Arc::clone(&stop_flag);
@@ -193,8 +214,6 @@ pub fn setup_recording_callbacks(
                 whisper_params.use_gpu = ui_use_gpu;
                 whisper_params.n_threads = ui_n_threads;
                 whisper_params.temperature = ui_temperature;
-                let vad_threshold = cfg.audio.vad_threshold;
-                let vad_timeout = cfg.audio.vad_silence_timeout_ms;
                 let ui_thread = ui_ref.clone();
                 let transcript_thread = Arc::clone(&transcript_arc);
                 let runtime_thread = runtime.clone();
