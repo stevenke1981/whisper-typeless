@@ -46,30 +46,35 @@ cargo test --target x86_64-pc-windows-msvc --no-default-features
 cargo clippy --all-targets --target x86_64-pc-windows-msvc --no-default-features -- -D warnings
 ```
 
-`Cargo.toml` 的 `default = ["cuda"]`，因此不加 `--no-default-features` 會嘗試 CUDA 建置。
+`Cargo.toml` 的 `default = []`（CPU 版）；CUDA 需 `--features cuda` 與 CUDA Toolkit。
+
+**在 git worktree（例如 `.claude/worktrees/...`）中建置**：路徑過長會讓 whisper-rs-sys 的 CMake/MSBuild 失敗，請設定短的 `CARGO_TARGET_DIR`（例如 `C:/t/wt1`）。
+
+**無 GUI 的快速驗證**：`whisper-typeless.exe --self-check`（模型清單、範本、設定檔、OpenCC），結束碼 0 表示通過。
 
 ## 模組地圖
 
-- `src/main.rs`：執行檔入口；初始化 tracing，建立 `AppState`，啟動 UI。
-- `src/lib.rs`：crate 根；`VERSION`、`APP_NAME`、模組宣告，並 include Slint 產生的模組。
-- `src/app.rs`：`AppState`（錄音狀態、目前模板與模型、轉錄歷史上限 1000、設定與模組註冊表）。
-- `src/audio/`：`capture.rs` 麥克風串流（cpal）、`resampler.rs` 重採樣到 16 kHz、`vad.rs` 能量式靜音偵測；`mod.rs` 放共用音訊常數。
-- `src/whisper/`：`engine.rs` 推論引擎、`params.rs` 完整 whisper 參數映射、`session.rs` 推論 session。
-- `src/models/`：`registry.rs` 載入內嵌與外部的模型目錄、`downloader.rs` 串流下載（含備用網址與校驗）、`manager.rs` 本機模型掃描（`.gguf` 與 `ggml-*.bin`）。
-- `src/transcription/`：`pipeline.rs` 轉錄後處理流水線、`opencc.rs` 繁簡轉換、`postprocess.rs` 贅字與重複移除、標點。
-- `src/context_templates/`：`templates.rs` `TemplateId` 與內建模板、`detector.rs` 關鍵字情境偵測、`custom.rs` 使用者模板讀寫。
-- `src/output/`：`mod.rs` `OutputRouter` 與 `OutputMode`、`clipboard.rs` 剪貼簿、`injector.rs` 焦點視窗注入、`formatter.rs` 輸出格式化。
-- `src/settings/`：`config.rs` `AppConfig`（TOML，設定檔路徑）、`persistence.rs` 讀寫、`ui_settings.rs` 舊版 `settings.json`、`mod.rs` 模組開關註冊表。
+- `src/main.rs`：入口；安裝 tracing（含錯誤紀錄 layer），解析 CLI，無參數時啟動 UI。
+- `src/cli.rs`：`--version`、`--help`、`--config-path`、`--self-check`（手寫解析，無額外相依）。
+- `src/lib.rs`：crate 根；`VERSION`、`APP_NAME`、模組宣告，include Slint 產生的模組。
+- `src/app.rs`：`AppState`（錄音狀態、目前模板與模型、設定、模組註冊表、啟動警告）。
+- `src/audio/`：`capture.rs` 麥克風（cpal）、`resampler.rs` 重採樣到 16 kHz、`vad.rs` 能量式靜音偵測；`mod.rs` 共用音訊常數。
+- `src/whisper/`：`engine.rs` 推論、`params.rs` 完整 whisper 參數、`session.rs`。
+- `src/models/`：`registry.rs` 模型目錄（內嵌 + 外部覆寫）、`downloader.rs` 串流下載（備用網址；依校驗值長度選 SHA-1/SHA-256）、`manager.rs` 本機模型掃描。
+- `src/transcription/`：`pipeline.rs` `TranscriptionPipeline`（`for_live` 供即時錄音）、`opencc.rs`、`postprocess.rs`。
+- `src/context_templates/`：`templates.rs` `TemplateRegistry`（`templates/*.toml` 以 `include_str!` 內嵌，可由 `<exe>/templates/` 與 `<config>/whisper-typeless/templates/` 覆寫；以穩定 id 為鍵）、`detector.rs` 加權關鍵字偵測、`custom.rs`。
+- `src/output/`：`OutputRouter` 與 `OutputMode`；剪貼簿與鍵盤藏在 `ClipboardSink` / `KeyboardSink` trait 後（測試用 mock）；隱私模式清除剪貼簿在 router 內處理。
+- `src/settings/`：`config.rs` `AppConfig`（唯一持久化設定，`config.toml`）、`persistence.rs`（損毀檔備份為 `.bak`、原子寫入）、`migration.rs`（舊 `settings.json` 一次性匯入）、`ui_settings.rs`（僅記憶體中的 UI 快照：`from_config` / `apply_to`）、`mod.rs` 模組開關。
 - `src/file_transcription/`：音檔解碼（symphonia）與 TXT / SRT / VTT 匯出。
-- `src/ui/`：`mod.rs` 執行 UI 與 `ui_update!` 巨集；`bridge.rs` 視窗模式、置頂、拖曳與 callback 接線；`window_icon.rs` 依錄音狀態更新工作列圖示。
-- `src/ui/bridge/`：`recording.rs` 錄音與轉錄流程、`hotkey.rs` 全域快捷鍵（Win32）、`ptt.rs` 按住說話（低階鍵盤 hook）、`templates.rs` 模板編輯、`file_mode.rs` 檔案轉錄。
-- `ui/appwindow.slint`：主視窗、鍵盤處理（Esc）、完整視窗與浮動視窗切換、錯誤紀錄覆蓋層。
-- `ui/components/`：`compact_bar.slint` 收合列、`quick_actions.slint` 快速操作列、`context_bar.slint` 模板列、`model_picker.slint` 模型選擇、`settings_panel.slint` 設定面板、`file_mode.slint` 檔案模式、`transcript.slint` 文字區、`waveform.slint` 波形、`toggle.slint` 開關。
-- `ui/styles/tokens.slint`：設計 token（淺色、深色、玻璃材質）。
-- `build.rs`：編譯 `ui/appwindow.slint`。
-- `tests/`：整合測試（`audio_tests.rs`、`transcription_tests.rs`、`output_tests.rs`）。
-- `scripts/`：PowerShell 工具腳本；`model-catalog.json` 與 `MODEL_CATALOG.md` 位於根目錄。
-- `.github/workflows/`：CI（check、clippy、fmt、test、build）與 tag 觸發的 release 流程。
+- `src/ui/`：`mod.rs` 啟動 UI 與 `ui_update!` 巨集、`error_log.rs` WARN/ERROR 環狀緩衝（200 筆）推送到 UI、`window_icon.rs`。
+- `src/ui/bridge/`：`mod.rs` callback 接線與設定同步、`window.rs` 視窗模式/置頂/拖曳/錯誤紀錄、`model.rs` 模型選擇與下載、`recording/`（`mod.rs` 錄音控制、`pipeline.rs` 錄音執行緒、`transcribe.rs` 轉錄→pipeline→router、`io.rs` WAV）、`hotkey.rs` 全域快捷鍵、`ptt.rs` 按住說話、`templates.rs`、`file_mode.rs`。
+- `ui/appwindow.slint`：主視窗、鍵盤（Esc / Space / E）、完整與浮動視窗切換、錯誤紀錄覆蓋層。
+- `ui/components/`：`compact_bar`、`quick_actions`、`context_bar`、`model_picker`、`settings_panel`（含隱私模式）、`file_mode`、`transcript`、`waveform`、`toggle`。
+- `ui/styles/tokens.slint`：設計 token。
+- `templates/*.toml`：內建情境模板。
+- `tests/`：整合測試。
+- `scripts/dev.ps1`：`check|test|lint|fmt|build|release|clean|doctor` [-Cuda]；`scripts/setup-env.ps1`（CUDA 環境）、`scripts/download-model.ps1`。
+- `.github/workflows/ci.yml`（fmt、clippy、test、release build）與 `release.yml`（push `v*` tag → zip + SHA256SUMS + 自動 release notes）。
 
 ## 開發規則
 
@@ -79,7 +84,7 @@ cargo clippy --all-targets --target x86_64-pc-windows-msvc --no-default-features
 - **不要記錄語音或轉錄內容**（包含 info 層級日誌）；不要新增網路呼叫或遙測。
 - 模型網址與校驗值只改 `model-catalog.json`，不要寫進 Rust 或 PowerShell 程式碼。
 - 新增 crate 依賴需有明確理由，並一併更新 `Cargo.lock`。
-- 不要提交執行期產物：`settings.json`、`models/`、錄音 WAV、`target/`、任何含憑證的檔案。
+- 不要提交執行期產物：`config.toml`、`settings.json*`、`models/`、錄音 WAV、`target/`、任何含憑證的檔案。
 - 文件放在 `docs/`（規格、架構、路線圖）；不要新增臨時報告類 Markdown。
 
 ## 發版流程

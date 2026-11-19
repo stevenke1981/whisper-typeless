@@ -143,6 +143,18 @@ export component AppWindow inherits Window {
                     return accept;
                 }
             }
+            // 僅在沒有文字輸入框取得焦點時才會進到這裡（FocusScope 本身持有焦點）
+            if (!e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta) {
+                if (e.text == " " && !root.settings-open) {
+                    root.toggle-recording();
+                    return accept;
+                }
+                if ((e.text == "e" || e.text == "E") && root.floating-mode) {
+                    root.floating-expanded = !root.floating-expanded;
+                    root.toggle-floating-expanded();
+                    return accept;
+                }
+            }
             return reject;
         }
     }

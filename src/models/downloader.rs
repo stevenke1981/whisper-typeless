@@ -1,4 +1,5 @@
 use futures::StreamExt;
+use sha1::Sha1;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tokio::fs;
@@ -98,7 +99,7 @@ impl ModelDownloader {
         let mut file = fs::File::create(temp).await?;
         let mut stream = response.bytes_stream();
         let mut downloaded = 0u64;
-        let mut hasher = Sha256::new();
+        let mut hasher = ChecksumHasher::for_expected(expected_sha256);
         let start = std::time::Instant::now();
 
         while let Some(chunk) = stream.next().await {
@@ -121,10 +122,10 @@ impl ModelDownloader {
         file.flush().await?;
         drop(file);
 
-        let computed = format!("{:x}", hasher.finalize());
-        if !expected_sha256.is_empty() && !computed.eq_ignore_ascii_case(expected_sha256) {
+        let (algo, computed) = hasher.finalize_hex();
+        if !checksum_matches(expected_sha256, &computed) {
             return Err(anyhow::anyhow!(
-                "SHA-256 校驗失敗: 期望 {expected_sha256}, 得到 {computed}"
+                "{algo} 校驗失敗: 期望 {expected_sha256}, 得到 {computed}"
             ));
         }
 
@@ -137,5 +138,84 @@ impl ModelDownloader {
     pub async fn is_downloaded(&self, model_id: &str) -> bool {
         let path = self.models_dir.join(format!("ggml-{model_id}.bin"));
         fs::metadata(&path).await.is_ok()
+    }
+}
+
+/// 依 catalog 提供的雜湊長度選擇演算法：40 hex = SHA-1（whisper.cpp 官方公布值），
+/// 其餘（含 64 hex）= SHA-256。
+enum ChecksumHasher {
+    Sha1(Sha1),
+    Sha256(Sha256),
+}
+
+impl ChecksumHasher {
+    fn for_expected(expected: &str) -> Self {
+        if expected.trim().len() == 40 {
+            Self::Sha1(Sha1::new())
+        } else {
+            Self::Sha256(Sha256::new())
+        }
+    }
+
+    fn update(&mut self, data: &[u8]) {
+        match self {
+            Self::Sha1(h) => h.update(data),
+            Self::Sha256(h) => h.update(data),
+        }
+    }
+
+    fn finalize_hex(self) -> (&'static str, String) {
+        match self {
+            Self::Sha1(h) => ("SHA-1", format!("{:x}", h.finalize())),
+            Self::Sha256(h) => ("SHA-256", format!("{:x}", h.finalize())),
+        }
+    }
+}
+
+/// 空的期望值代表 catalog 未提供雜湊，視為通過。
+fn checksum_matches(expected: &str, computed: &str) -> bool {
+    let expected = expected.trim();
+    expected.is_empty() || computed.eq_ignore_ascii_case(expected)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hex_of(expected: &str, data: &[u8]) -> (&'static str, String) {
+        let mut h = ChecksumHasher::for_expected(expected);
+        h.update(data);
+        h.finalize_hex()
+    }
+
+    #[test]
+    fn forty_hex_chars_selects_sha1() {
+        let (algo, hex) = hex_of(&"0".repeat(40), b"abc");
+        assert_eq!(algo, "SHA-1");
+        assert_eq!(hex, "a9993e364706816aba3e25717850c26c9cd0d89d");
+    }
+
+    #[test]
+    fn sixty_four_hex_chars_selects_sha256() {
+        let (algo, hex) = hex_of(&"0".repeat(64), b"abc");
+        assert_eq!(algo, "SHA-256");
+        assert_eq!(
+            hex,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn catalog_sha1_values_verify() {
+        let (_, hex) = hex_of("A9993E364706816ABA3E25717850C26C9CD0D89D", b"abc");
+        assert!(checksum_matches(
+            "A9993E364706816ABA3E25717850C26C9CD0D89D",
+            &hex
+        ));
+        assert!(!checksum_matches(
+            "bd577a113a864445d4c299885e0cb97d4ba92b5f",
+            &hex
+        ));
+        assert!(checksum_matches("", &hex));
     }
 }

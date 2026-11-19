@@ -81,7 +81,7 @@ pub fn help_text() -> String {
 
 /// 設定檔路徑（與 `AppConfig::load_or_default` 使用相同位置）
 pub fn config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("whisper-typeless").join("config.toml"))
+    crate::settings::config::AppConfig::config_path().ok()
 }
 
 // ─── 自我檢查 ─────────────────────────────────────────────────────────────────

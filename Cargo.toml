@@ -37,6 +37,7 @@ ferrous-opencc = "0.4"
 
 # Crypto (model checksum)
 sha2 = "0.10"
+sha1 = "0.10"
 
 # Error handling
 thiserror = "1"

@@ -15,14 +15,19 @@
 - 情境模板改由 TOML 定義；可用 `templates/*.toml` 覆寫內建模板。
 - 大量新增單元與整合測試（不依賴音訊、GPU、網路或模型檔案）。
 - tag 觸發的 release workflow（`release.yml`）：建置 zip、產生 `SHA256SUMS`，並自動產生 Release 說明。
+- 視窗內快捷鍵：`Space` 開始／停止錄音、`E` 展開／收合浮動視窗。
 - 專案文件：雙語 README、AGENTS.md / CLAUDE.md（給 AI 代理）、`docs/` 目錄（規格、架構、路線圖）、MIT 授權檔。
 
 ### Changed
 
+- `Cargo.toml` 預設 feature 改為空（CPU 版）；CUDA 需加 `--features cuda`。
+- 情境模板以穩定英文 id 為索引，不再依賴顯示名稱。
+- 設定儲存改為先寫暫存檔再取代，避免寫入中斷導致設定損毀。
 - 建置與檢查腳本整併為 `scripts/dev.ps1`（`check`、`test`、`lint`、`build [-Cuda]`）。
 
 ### Fixed
 
+- 修正應用內模型下載一律校驗失敗：依 catalog 校驗值長度自動選用 SHA-1 或 SHA-256。
 - 修正 CI：改為 CPU 版建置（`--no-default-features`），在 `windows-latest` 的 MSVC 工具鏈上執行。
 
 ## [0.2.0] - 2026-06-29

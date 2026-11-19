@@ -47,8 +47,12 @@ jobs:
         run: cargo build --release --no-default-features
 
       - name: Smoke test (--self-check)
-        continue-on-error: false
-        run: target/release/whisper-typeless.exe --self-check
+        shell: pwsh
+        run: |
+          # release 版為 windows 子系統：PowerShell 不會等待 GUI 程式，須用 Start-Process -Wait 取得結束碼
+          $p = Start-Process -FilePath target/release/whisper-typeless.exe -ArgumentList '--self-check' -Wait -PassThru -NoNewWindow
+          Write-Host "self-check exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { exit $p.ExitCode }
 
       - name: Package
         id: pkg

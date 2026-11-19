@@ -30,7 +30,7 @@ whisper-typeless 把你的語音即時轉成文字，並貼到你正在輸入的
 
 ### 下載與安裝
 
-1. 到 [GitHub Releases](https://github.com/luckyegg168/whisper-typeless/releases) 下載 `whisper-typeless-vX.Y.Z-windows-x86_64-cpu.zip`。
+1. 到 [GitHub Releases](https://github.com/stevenke1981/whisper-typeless/releases) 下載 `whisper-typeless-vX.Y.Z-windows-x86_64-cpu.zip`。
 2. 解壓縮到任一資料夾。
 3. 若啟動時出現缺少 `VCRUNTIME140.dll` 或 `MSVCP140.dll` 的錯誤，請安裝 [Microsoft Visual C++ Redistributable（x64）](https://aka.ms/vs/17/release/vc_redist.x64.exe)。
 4. 執行 `whisper-typeless.exe`。
@@ -45,8 +45,6 @@ whisper-typeless 把你的語音即時轉成文字，並貼到你正在輸入的
 - 模型儲存在執行檔旁的 `models\` 資料夾。
 - 模型越大越準確，但越慢、占用越多記憶體與 VRAM。中文語音建議至少使用 `small`。
 
-> 已知問題：應用內下載目前的校驗設定有誤，下載可能會以「SHA-256 校驗失敗」中止。暫時解法請見[疑難排解](#疑難排解)。
-
 ### 快捷鍵
 
 | 操作 | 預設按鍵 | 說明 |
@@ -54,8 +52,8 @@ whisper-typeless 把你的語音即時轉成文字，並貼到你正在輸入的
 | 開始／停止錄音（切換） | `Ctrl+Shift+W` | 全域快捷鍵，僅 Windows；可在設定中修改 |
 | 按住說話（PTT） | `Ctrl+Alt+L` | 按住開始錄音，放開停止並送出辨識 |
 | 收合 ／ 關閉 | `Esc` | 依序關閉設定面板、錯誤紀錄，或收合展開的浮動視窗 |
-
-目前視窗內的鍵盤操作只有 `Esc`。規格中的 `Space` 錄音、`E` 展開等按鍵尚未實作（見 [路線圖](docs/roadmap.md)）。
+| 開始／停止錄音 | `Space` | 視窗取得焦點且未在輸入框打字時 |
+| 展開／收合浮動視窗 | `E` | 僅浮動視窗模式 |
 
 ### 輸出模式
 
@@ -118,7 +116,7 @@ remove_fillers = ["嗯", "啊", "那個"]
 | `--version` | 顯示版本後結束 |
 | `--help` | 顯示用法後結束 |
 | `--config-path` | 印出設定檔路徑後結束 |
-| `--self-check` | 檢查執行環境（路徑、模型資料夾、設定檔等）後結束 |
+| `--self-check` | 不開視窗檢查模型清單、情境範本、設定檔與 OpenCC；全部通過結束碼為 0，否則為 1 |
 
 ### 設定檔
 
@@ -140,11 +138,8 @@ remove_fillers = ["嗯", "啊", "那個"]
 **啟動時出現 VCRUNTIME140.dll 或 MSVCP140.dll 錯誤**
 安裝 [Microsoft Visual C++ Redistributable（x64）](https://aka.ms/vs/17/release/vc_redist.x64.exe)。
 
-**模型下載失敗，顯示「SHA-256 校驗失敗」**
-這是目前已知問題：應用內下載的校驗值與模型目錄不一致。可以改用以下方式取得模型：
-
-1. 在 PowerShell 於專案目錄執行 `.\scripts\download-model.ps1`（使用 SHA-1 正確校驗）。
-2. 或從 [Hugging Face 的 whisper.cpp 模型頁面](https://huggingface.co/ggerganov/whisper.cpp) 手動下載 `ggml-*.bin` 或 `*.gguf`，放入執行檔旁的 `models\` 資料夾後重新啟動。
+**模型下載失敗或校驗失敗**
+應用內下載會依 `model-catalog.json` 的校驗值（SHA-1 或 SHA-256）驗證檔案，並自動改用備用來源。若仍失敗，可在專案目錄執行 `.\scripts\download-model.ps1`，或從 [Hugging Face 的 whisper.cpp 模型頁面](https://huggingface.co/ggerganov/whisper.cpp) 手動下載 `ggml-*.bin`，放入執行檔旁的 `models\` 資料夾後重新啟動。
 
 **辨識結果沒有貼到目標視窗**
 - 確認設定的輸出模式包含「注入焦點視窗」。
@@ -218,7 +213,7 @@ cargo build --release --no-default-features --target x86_64-pc-windows-msvc
 - **Privacy mode** skips saving WAV files and clears the clipboard after output.
 - **Single small exe**; CUDA acceleration is optional and built from source.
 
-**Install:** download `whisper-typeless-vX.Y.Z-windows-x86_64-cpu.zip` from [GitHub Releases](https://github.com/luckyegg168/whisper-typeless/releases), unzip, and install the [Visual C++ Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe) if you see missing VCRUNTIME140.dll or MSVCP140.dll errors.
+**Install:** download `whisper-typeless-vX.Y.Z-windows-x86_64-cpu.zip` from [GitHub Releases](https://github.com/stevenke1981/whisper-typeless/releases), unzip, and install the [Visual C++ Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe) if you see missing VCRUNTIME140.dll or MSVCP140.dll errors.
 
 **First run:** pick a model when prompted. Models are downloaded on demand into the `models` folder next to the exe. Known issue: in-app download checksum verification is currently broken; see the troubleshooting section for a workaround.
 
