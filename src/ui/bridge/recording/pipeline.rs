@@ -7,7 +7,9 @@ use tracing::{error, info};
 
 use slint::{ModelRc, VecModel};
 
-use crate::audio::{AudioSegment, Resampler, VoiceActivityDetector, TARGET_SAMPLE_RATE, WAVEFORM_BAR_COUNT};
+use crate::audio::{
+    AudioSegment, Resampler, VoiceActivityDetector, TARGET_SAMPLE_RATE, WAVEFORM_BAR_COUNT,
+};
 use crate::ui::bridge::ModelRuntime;
 use crate::whisper::WhisperParams;
 use crate::{AppWindow, TranscriptSegmentData};
@@ -15,6 +17,7 @@ use crate::{AppWindow, TranscriptSegmentData};
 use super::io::save_recording_wav;
 use super::transcribe::transcribe_full_recording;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn run_recording_pipeline(
     model_id: String,
     model_path: std::path::PathBuf,
@@ -52,7 +55,13 @@ pub(super) fn run_recording_pipeline(
     loop {
         if stop_flag.load(Ordering::SeqCst) {
             while let Ok(chunk) = audio_rx.try_recv() {
-                process_recording_chunk(chunk, &mut resampler, &mut vad, &mut full_samples, &ui_weak);
+                process_recording_chunk(
+                    chunk,
+                    &mut resampler,
+                    &mut vad,
+                    &mut full_samples,
+                    &ui_weak,
+                );
             }
             let _ = vad.flush();
 

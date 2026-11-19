@@ -115,7 +115,6 @@ impl VoiceActivityDetector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::TARGET_SAMPLE_RATE;
 
     #[test]
     fn silence_produces_no_segment() {
@@ -191,7 +190,7 @@ mod tests {
 
         // silence samples should now trigger timeout
         let silent = vec![0.01f32; 1600];
-        let events = vad.process(&silent);
+        let _events = vad.process(&silent);
         // since we didn't update last_speech (silence doesn't set it),
         // we need to wait for the original last_speech to be old enough.
         // This is a time-dependent test - let's verify the setter works.

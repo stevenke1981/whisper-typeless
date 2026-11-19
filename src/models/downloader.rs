@@ -62,7 +62,7 @@ impl ModelDownloader {
                 .download_from_url(
                     url,
                     model_id,
-                        &model.sha256,
+                    &model.sha256,
                     &dest,
                     &temp,
                     progress_tx.clone(),

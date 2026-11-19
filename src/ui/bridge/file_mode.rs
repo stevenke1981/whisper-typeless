@@ -11,8 +11,8 @@ use crate::settings::config::AppConfig;
 use crate::whisper::WhisperEngine;
 use crate::AppWindow;
 
-use super::ModelRuntime;
 use super::model::spawn_model_select_or_download;
+use super::ModelRuntime;
 
 // ─── 檔案模式 Callbacks ───────────────────────────────────────────────────────
 

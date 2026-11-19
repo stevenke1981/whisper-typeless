@@ -51,10 +51,7 @@ impl ModelId {
 
     /// Look up candidate filenames from a string model id.
     pub fn candidate_filenames_for(id: &str) -> Vec<String> {
-        vec![
-            format!("{id}.gguf"),
-            format!("ggml-{id}.bin"),
-        ]
+        vec![format!("{id}.gguf"), format!("ggml-{id}.bin")]
     }
 
     /// Search `dir` for any filename that matches a model id, returning the first match.

@@ -75,7 +75,10 @@ impl IcuStderrGuard {
 
             SetStdHandle(STD_ERROR_HANDLE, raw_null);
 
-            Some(Self { old_handle: raw_old, null_handle: raw_null })
+            Some(Self {
+                old_handle: raw_old,
+                null_handle: raw_null,
+            })
         }
     }
 }
@@ -103,7 +106,6 @@ impl IcuStderrGuard {
         None
     }
 }
-
 
 pub(crate) struct LoadedWhisperModel {
     pub(crate) model_id: String,

@@ -69,7 +69,10 @@ pub fn setup_recording_callbacks(
                         ui.set_audio_level(0.0);
                         ui.set_is_processing(false);
                         ui.set_current_partial("".into());
-                        ui.set_waveform_bars(ModelRc::new(VecModel::from(vec![0.0f32; WAVEFORM_BAR_COUNT])));
+                        ui.set_waveform_bars(ModelRc::new(VecModel::from(vec![
+                            0.0f32;
+                            WAVEFORM_BAR_COUNT
+                        ])));
                     }
                 });
             } else {

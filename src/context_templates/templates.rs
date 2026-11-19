@@ -227,8 +227,10 @@ mod tests {
     fn templates_apply_prompt_to_params() {
         let reg = TemplateRegistry::new();
         let t = reg.get(&TemplateId::Meeting).unwrap();
-        let mut params = WhisperParams::default();
-        params.initial_prompt = None;
+        let mut params = WhisperParams {
+            initial_prompt: None,
+            ..Default::default()
+        };
         t.apply_to_params(&mut params);
         assert_eq!(
             params.initial_prompt.as_deref(),
@@ -240,8 +242,10 @@ mod tests {
     fn templates_apply_language_override() {
         let reg = TemplateRegistry::new();
         let t = reg.get(&TemplateId::Meeting).unwrap();
-        let mut params = WhisperParams::default();
-        params.language = Some("en".into());
+        let mut params = WhisperParams {
+            language: Some("en".into()),
+            ..Default::default()
+        };
         t.apply_to_params(&mut params);
         assert_eq!(params.language.as_deref(), Some("zh"));
     }

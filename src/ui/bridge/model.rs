@@ -1,8 +1,5 @@
 use std::path::PathBuf;
-use std::sync::{
-    atomic::Ordering,
-    Arc, Mutex,
-};
+use std::sync::{atomic::Ordering, Arc, Mutex};
 use tokio::runtime::Handle as TokioHandle;
 use tracing::{error, info};
 
@@ -32,10 +29,7 @@ pub(super) fn model_entries_from(models: &[ModelInfo], _selected_id: &str) -> Ve
         .collect()
 }
 
-pub(super) async fn setup_model_entries(
-    ui: &AppWindow,
-    _config: &AppConfig,
-) -> anyhow::Result<()> {
+pub(super) async fn setup_model_entries(ui: &AppWindow, _config: &AppConfig) -> anyhow::Result<()> {
     let models_dir = AppConfig::models_dir()?;
     let manager = ModelManager::new(models_dir);
     let models = manager.list_available().await;
@@ -264,7 +258,13 @@ fn select_downloaded_model(
         }
     });
 
-    spawn_model_preload(runtime, model_id, model_path, whisper_params, ui_for_preload);
+    spawn_model_preload(
+        runtime,
+        model_id,
+        model_path,
+        whisper_params,
+        ui_for_preload,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -168,7 +168,11 @@ mod tests {
     fn postprocess_repeated_edge_bigrams() {
         let proc = default_proc();
         let result = proc.process("ABABAB");
-        assert!(result.len() < 6, "should collapse 'ABABAB' but got '{}'", result);
+        assert!(
+            result.len() < 6,
+            "should collapse 'ABABAB' but got '{}'",
+            result
+        );
     }
 
     #[test]
