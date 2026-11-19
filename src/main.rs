@@ -2,9 +2,31 @@
 
 use anyhow::Result;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use whisper_typeless::cli;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    let command = match cli::parse_args(std::env::args().skip(1)) {
+        Ok(command) => command,
+        Err(e) => {
+            cli::attach_parent_console();
+            eprintln!("{e}\n\n{}", cli::help_text());
+            std::process::exit(2);
+        }
+    };
+
+    if command != cli::Command::RunGui {
+        cli::attach_parent_console();
+        let code = cli::run_headless(command).unwrap_or(0);
+        std::process::exit(code);
+    }
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run_gui())
+}
+
+async fn run_gui() -> Result<()> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
             std::env::var("RUST_LOG").unwrap_or_else(|_| {
@@ -13,6 +35,8 @@ async fn main() -> Result<()> {
             }),
         ))
         .with(tracing_subscriber::fmt::layer())
+        // WARN/ERROR → 錯誤紀錄環形緩衝 → UI 錯誤徽章
+        .with(whisper_typeless::ui::error_log::layer())
         .init();
 
     tracing::info!(

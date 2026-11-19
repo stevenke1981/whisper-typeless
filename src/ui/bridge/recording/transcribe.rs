@@ -5,11 +5,13 @@ use tracing::{error, info};
 use slint::{ModelRc, VecModel};
 
 use crate::audio::AudioSegment;
-use crate::ui::bridge::{convert_chinese_text, LoadedWhisperModel, ModelRuntime};
+use crate::output::{InjectMethod, OutputFormatter, OutputMode, OutputRouter};
+use crate::transcription::TranscriptionPipeline;
+use crate::ui::bridge::{LoadedWhisperModel, ModelRuntime};
 use crate::whisper::{WhisperEngine, WhisperParams};
 use crate::{AppWindow, TranscriptSegmentData};
 
-use super::io::{current_time_str, inject_text_to_focused_window};
+use super::io::current_time_str;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn transcribe_full_recording(
@@ -126,8 +128,13 @@ fn transcribe_and_update(
 
     match engine.transcribe(&segment, whisper_params) {
         Ok(result) => {
-            let raw_text = result.text.trim().to_string();
-            let text = convert_chinese_text(&raw_text, opencc_enabled, &conversion_mode);
+            let text = match TranscriptionPipeline::for_live(opencc_enabled, &conversion_mode) {
+                Ok(pipeline) => pipeline.process_text(&result.text, None),
+                Err(e) => {
+                    error!("OpenCC 轉換初始化失敗: {e}");
+                    result.text.trim().to_string()
+                }
+            };
             info!("轉錄結果: {:?}（{} 字）", text, text.chars().count());
 
             if text.is_empty() {
@@ -141,21 +148,16 @@ fn transcribe_and_update(
                 return;
             }
 
-            if clipboard_enabled {
-                if let Ok(mut cb) = arboard::Clipboard::new() {
-                    let _ = cb.set_text(&text);
-                }
-            }
-            if inject_enabled {
-                inject_text_to_focused_window(&text);
-            }
-
-            // 隱私模式：輸出後清除剪貼簿
-            if privacy_mode {
-                if let Ok(mut cb) = arboard::Clipboard::new() {
-                    let _ = cb.clear();
-                }
-            }
+            // 剪貼簿 / 鍵入 / 隱私清除皆由 OutputRouter 處理；
+            // 即時路徑沿用 enigo.text 直接鍵入、無額外延遲。失敗時 router 會記 warn。
+            let mut router = OutputRouter::new(
+                OutputMode::from_flags(clipboard_enabled, inject_enabled),
+                OutputFormatter::passthrough(),
+            )
+            .with_inject_method(InjectMethod::Type)
+            .with_inject_delay_ms(0)
+            .with_privacy_mode(privacy_mode);
+            let _ = router.send(&text);
 
             let ts = current_time_str();
             let seg = TranscriptSegmentData {

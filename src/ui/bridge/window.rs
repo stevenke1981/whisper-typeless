@@ -117,6 +117,8 @@ pub(super) fn setup_floating_mode_callbacks(ui: &AppWindow) {
     {
         let ui_ref = ui.as_weak();
         ui.on_clear_error_log(move || {
+            // 清空緩衝；listener 會把空清單推回 UI
+            crate::ui::error_log::global().clear();
             if let Some(ui) = ui_ref.upgrade() {
                 let empty: Vec<slint::SharedString> = Vec::new();
                 ui.set_error_log(slint::ModelRc::new(slint::VecModel::from(empty)));
@@ -124,4 +126,39 @@ pub(super) fn setup_floating_mode_callbacks(ui: &AppWindow) {
             }
         });
     }
+
+    attach_error_log_sink(ui);
+}
+
+/// 把全域錯誤紀錄（tracing WARN/ERROR）同步到 UI 的 `error-log` 屬性 / 計數徽章。
+///
+/// 連續大量事件只排一次 event-loop 更新（pending 旗標合併）。
+fn attach_error_log_sink(ui: &AppWindow) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let ui_ref = ui.as_weak();
+    let pending = Arc::new(AtomicBool::new(false));
+    let refresh = move || {
+        if pending.swap(true, Ordering::AcqRel) {
+            return; // 已有一次更新排隊中
+        }
+        let u = ui_ref.clone();
+        let p = Arc::clone(&pending);
+        let _ = slint::invoke_from_event_loop(move || {
+            p.store(false, Ordering::Release);
+            if let Some(ui) = u.upgrade() {
+                let entries: Vec<slint::SharedString> = crate::ui::error_log::global()
+                    .snapshot_newest_first()
+                    .into_iter()
+                    .map(Into::into)
+                    .collect();
+                ui.set_error_log(slint::ModelRc::new(slint::VecModel::from(entries)));
+            }
+        });
+    };
+
+    // 啟動前已發生的錯誤也要顯示
+    refresh();
+    crate::ui::error_log::global().set_listener(refresh);
 }
