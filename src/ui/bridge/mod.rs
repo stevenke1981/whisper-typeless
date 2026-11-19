@@ -16,8 +16,9 @@ use tracing::error;
 
 use crate::app::AppState;
 use crate::settings::config::AppConfig;
+use crate::settings::ui_settings::conversion_mode_from_str;
 use crate::settings::ui_settings::UiSettings;
-use crate::transcription::opencc::{ConversionMode, OpenCCProcessor};
+use crate::transcription::opencc::OpenCCProcessor;
 use crate::whisper::WhisperEngine;
 
 use slint::ComponentHandle;
@@ -138,36 +139,14 @@ pub async fn launch(state: Arc<RwLock<AppState>>) -> anyhow::Result<()> {
     let ui = AppWindow::new()?;
     ui.set_app_title(crate::APP_NAME.into());
 
-    // Restore UI settings from settings.json (if it exists) before any callbacks are wired.
-    if let Some(saved) = UiSettings::load() {
-        ui.set_vad_threshold(saved.vad_threshold);
-        ui.set_silence_timeout(saved.silence_timeout_ms);
-        ui.set_n_threads(saved.n_threads);
-        ui.set_use_gpu(saved.use_gpu);
-        ui.set_temperature(saved.temperature);
-        ui.set_conversion_mode(saved.conversion_mode.into());
-        ui.set_append_newline(saved.append_newline);
-        ui.set_hotkey(saved.hotkey.into());
-        ui.set_ptt_hotkey(saved.ptt_hotkey.into());
-        ui.set_ptt_mode(saved.ptt_mode);
-        ui.set_mod_vad(saved.mod_vad);
-        ui.set_mod_context(saved.mod_context);
-        ui.set_mod_opencc(saved.mod_opencc);
-        ui.set_mod_inject(saved.mod_inject);
-        ui.set_mod_waveform(saved.mod_waveform);
-        ui.set_mod_history(saved.mod_history);
-        ui.set_clipboard_enabled(saved.clipboard_enabled);
-        ui.set_inject_enabled(saved.inject_enabled);
-        if !saved.selected_model_id.is_empty() {
-            ui.set_selected_model_id(saved.selected_model_id.into());
-        }
-    }
-
-    let config = {
+    // 設定唯一來源：AppConfig（config.toml）。在接上任何 callback 前套用到 UI。
+    let (config, config_store, startup_warnings) = {
         let s = state.read().await;
         let c = s.config.read().await.clone();
-        c
+        (c, Arc::clone(&s.config), s.startup_warnings.clone())
     };
+    apply_ui_settings(&ui, &UiSettings::from_config(&config));
+    show_startup_warnings(&ui, &startup_warnings);
 
     let selected_model_id: Arc<Mutex<String>> =
         Arc::new(Mutex::new(ui.get_selected_model_id().to_string()));
@@ -236,35 +215,22 @@ pub async fn launch(state: Arc<RwLock<AppState>>) -> anyhow::Result<()> {
         });
     }
 
-    // Wire save-settings → serialize UI state → write settings.json
+    // Wire save-settings → UI 快照套用到 AppConfig → 寫入 config.toml
     {
         let ui_ref = ui.as_weak();
         ui.on_save_settings(move || {
             let Some(ui) = ui_ref.upgrade() else { return };
 
-            let settings = UiSettings {
-                vad_threshold: ui.get_vad_threshold(),
-                silence_timeout_ms: ui.get_silence_timeout(),
-                n_threads: ui.get_n_threads(),
-                use_gpu: ui.get_use_gpu(),
-                temperature: ui.get_temperature(),
-                conversion_mode: ui.get_conversion_mode().to_string(),
-                append_newline: ui.get_append_newline(),
-                hotkey: ui.get_hotkey().to_string(),
-                ptt_hotkey: ui.get_ptt_hotkey().to_string(),
-                ptt_mode: ui.get_ptt_mode(),
-                mod_vad: ui.get_mod_vad(),
-                mod_context: ui.get_mod_context(),
-                mod_opencc: ui.get_mod_opencc(),
-                mod_inject: ui.get_mod_inject(),
-                mod_waveform: ui.get_mod_waveform(),
-                mod_history: ui.get_mod_history(),
-                clipboard_enabled: ui.get_clipboard_enabled(),
-                inject_enabled: ui.get_inject_enabled(),
-                selected_model_id: ui.get_selected_model_id().to_string(),
+            let snapshot = ui_settings_from_window(&ui);
+            let result = match config_store.try_write() {
+                Ok(mut cfg) => {
+                    snapshot.apply_to(&mut cfg);
+                    cfg.save()
+                }
+                Err(_) => Err(anyhow::anyhow!("設定正被其他工作使用中，請稍後再試")),
             };
 
-            match settings.save() {
+            match result {
                 Ok(()) => {
                     ui.set_save_status("✓ 已儲存".into());
                     // Clear feedback after 2 s
@@ -295,16 +261,71 @@ pub async fn launch(state: Arc<RwLock<AppState>>) -> anyhow::Result<()> {
     Ok(())
 }
 
-// ─── 中文轉換輔助 ──────────────────────────────────────────────────────────────
+// ─── 設定 ↔ UI ────────────────────────────────────────────────────────────────
 
-fn conversion_mode_from_str(mode: &str) -> ConversionMode {
-    match mode {
-        "zh-HK" => ConversionMode::ZhHK,
-        "zh-CN" => ConversionMode::ZhCN,
-        "raw" => ConversionMode::Raw,
-        _ => ConversionMode::ZhTW,
+/// 將設定快照寫入 UI 屬性。
+fn apply_ui_settings(ui: &AppWindow, s: &UiSettings) {
+    ui.set_vad_threshold(s.vad_threshold);
+    ui.set_silence_timeout(s.silence_timeout_ms);
+    ui.set_n_threads(s.n_threads);
+    ui.set_use_gpu(s.use_gpu);
+    ui.set_temperature(s.temperature);
+    ui.set_conversion_mode(s.conversion_mode.clone().into());
+    ui.set_append_newline(s.append_newline);
+    ui.set_hotkey(s.hotkey.clone().into());
+    ui.set_ptt_hotkey(s.ptt_hotkey.clone().into());
+    ui.set_ptt_mode(s.ptt_mode);
+    ui.set_mod_vad(s.mod_vad);
+    ui.set_mod_context(s.mod_context);
+    ui.set_mod_opencc(s.mod_opencc);
+    ui.set_mod_inject(s.mod_inject);
+    ui.set_mod_waveform(s.mod_waveform);
+    ui.set_mod_history(s.mod_history);
+    ui.set_clipboard_enabled(s.clipboard_enabled);
+    ui.set_inject_enabled(s.inject_enabled);
+    ui.set_privacy_mode(s.privacy_mode);
+    if !s.selected_model_id.is_empty() {
+        ui.set_selected_model_id(s.selected_model_id.clone().into());
     }
 }
+
+/// 從 UI 屬性讀出設定快照。
+fn ui_settings_from_window(ui: &AppWindow) -> UiSettings {
+    UiSettings {
+        vad_threshold: ui.get_vad_threshold(),
+        silence_timeout_ms: ui.get_silence_timeout(),
+        n_threads: ui.get_n_threads(),
+        use_gpu: ui.get_use_gpu(),
+        temperature: ui.get_temperature(),
+        conversion_mode: ui.get_conversion_mode().to_string(),
+        hotkey: ui.get_hotkey().to_string(),
+        ptt_hotkey: ui.get_ptt_hotkey().to_string(),
+        ptt_mode: ui.get_ptt_mode(),
+        mod_vad: ui.get_mod_vad(),
+        mod_context: ui.get_mod_context(),
+        mod_opencc: ui.get_mod_opencc(),
+        mod_inject: ui.get_mod_inject(),
+        mod_waveform: ui.get_mod_waveform(),
+        mod_history: ui.get_mod_history(),
+        append_newline: ui.get_append_newline(),
+        clipboard_enabled: ui.get_clipboard_enabled(),
+        inject_enabled: ui.get_inject_enabled(),
+        privacy_mode: ui.get_privacy_mode(),
+        selected_model_id: ui.get_selected_model_id().to_string(),
+    }
+}
+
+/// 啟動警告（設定檔損毀等）→ 錯誤紀錄 + 狀態列。
+fn show_startup_warnings(ui: &AppWindow, warnings: &[String]) {
+    if warnings.is_empty() {
+        return;
+    }
+    let entries: Vec<slint::SharedString> = warnings.iter().map(|w| w.as_str().into()).collect();
+    ui.set_error_log(slint::ModelRc::new(slint::VecModel::from(entries)));
+    ui.set_status_text("⚠ 設定載入有問題，詳見錯誤紀錄".into());
+}
+
+// ─── 中文轉換輔助 ──────────────────────────────────────────────────────────────
 
 pub(super) fn convert_chinese_text(
     text: &str,

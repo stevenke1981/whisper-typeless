@@ -1,3 +1,4 @@
+use super::persistence::ConfigPersistence;
 use crate::context_templates::TemplateId;
 use crate::output::OutputMode;
 use crate::transcription::opencc::ConversionMode;
@@ -5,11 +6,16 @@ use crate::whisper::WhisperParams;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GeneralConfig {
     pub theme: String,
     pub language_ui: String,
     pub start_minimized: bool,
     pub global_hotkey: String,
+    /// 按住說話 (PTT) 快捷鍵
+    pub ptt_hotkey: String,
+    /// 是否啟用 PTT 模式
+    pub ptt_mode: bool,
     pub auto_start: bool,
 }
 
@@ -20,12 +26,15 @@ impl Default for GeneralConfig {
             language_ui: "zh-TW".into(),
             start_minimized: false,
             global_hotkey: "Ctrl+Shift+W".into(),
+            ptt_hotkey: "Ctrl+Alt+L".into(),
+            ptt_mode: true,
             auto_start: false,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AudioConfig {
     pub device_name: Option<String>,
     pub vad_silence_timeout_ms: u64,
@@ -45,6 +54,7 @@ impl Default for AudioConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ChineseConfig {
     pub conversion: ConversionMode,
     pub add_punctuation: bool,
@@ -62,6 +72,7 @@ impl Default for ChineseConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct OutputConfig {
     pub mode: OutputMode,
     pub append_newline: bool,
@@ -85,6 +96,7 @@ impl Default for OutputConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ContextConfig {
     pub auto_detect: bool,
     pub default_template: TemplateId,
@@ -100,6 +112,7 @@ impl Default for ContextConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct HistoryConfig {
     pub max_entries: usize,
     pub save_audio: bool,
@@ -116,7 +129,8 @@ impl Default for HistoryConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ModuleConfig {
     pub vad: bool,
     pub context_templates: bool,
@@ -127,6 +141,12 @@ pub struct ModuleConfig {
     pub noise_suppress: bool,
     pub auto_punctuation: bool,
     pub speaker_detect: bool,
+}
+
+impl Default for ModuleConfig {
+    fn default() -> Self {
+        Self::all_enabled()
+    }
 }
 
 impl ModuleConfig {
@@ -160,9 +180,32 @@ impl ModuleConfig {
     }
 }
 
+/// 預設模型 ID（與 UI 初始值一致）
+pub const DEFAULT_MODEL_ID: &str = "small";
+
+/// 模型選擇
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModelConfig {
+    /// 目前選用的模型 ID（對應 ggml-{id}.bin）
+    pub selected_id: String,
+}
+
+impl Default for ModelConfig {
+    fn default() -> Self {
+        Self {
+            selected_id: DEFAULT_MODEL_ID.into(),
+        }
+    }
+}
+
+/// 唯一的持久化設定結構（config.toml）。
+/// UI 設定僅為此結構的記憶體快照，見 [`crate::settings::ui_settings::UiSettings`]。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
     pub general: GeneralConfig,
+    pub model: ModelConfig,
     pub audio: AudioConfig,
     pub whisper: WhisperParams,
     pub chinese: ChineseConfig,
@@ -172,43 +215,22 @@ pub struct AppConfig {
     pub modules: ModuleConfig,
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            audio: AudioConfig::default(),
-            whisper: WhisperParams::default(),
-            chinese: ChineseConfig::default(),
-            output: OutputConfig::default(),
-            context: ContextConfig::default(),
-            history: HistoryConfig::default(),
-            modules: ModuleConfig::all_enabled(),
-        }
-    }
-}
-
 impl AppConfig {
+    /// 從預設位置載入；檔案損毀時會備份為 `config.toml.bak` 並回傳預設值。
+    /// 需要錯誤訊息時請改用 [`ConfigPersistence::load_or_recover`]。
     pub fn load_or_default() -> anyhow::Result<Self> {
-        let path = Self::config_path()?;
-        if path.exists() {
-            let content = std::fs::read_to_string(&path)?;
-            Ok(toml::from_str(&content).unwrap_or_default())
-        } else {
-            Ok(Self::default())
-        }
+        Ok(ConfigPersistence::default_location()?
+            .load_or_recover()
+            .config)
     }
 
+    /// 寫入預設位置的 config.toml（唯一的設定檔）。
     pub fn save(&self) -> anyhow::Result<()> {
-        let path = Self::config_path()?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let content = toml::to_string_pretty(self)?;
-        std::fs::write(&path, content)?;
-        Ok(())
+        ConfigPersistence::default_location()?.save(self)
     }
 
-    fn config_path() -> anyhow::Result<std::path::PathBuf> {
+    /// config.toml 的完整路徑（%APPDATA%/whisper-typeless/config.toml）。
+    pub fn config_path() -> anyhow::Result<std::path::PathBuf> {
         let base = dirs::config_dir().ok_or_else(|| anyhow::anyhow!("無法取得設定目錄"))?;
         Ok(base.join("whisper-typeless").join("config.toml"))
     }

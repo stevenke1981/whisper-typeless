@@ -90,6 +90,7 @@ export component SettingsPanel {
 
     // 輸出設定
     in-out property <bool> append-newline: true;
+    in-out property <bool> privacy-mode: false;
 
     // 模型
     in property <[ModelEntry]> model-entries: [];
@@ -387,6 +388,22 @@ export component SettingsPanel {
                                     }
                                 }
                             }
+                        }
+
+                        // ── 隱私 ──────────────────────────────
+                        SectionHeader { title: "隱私"; }
+
+                        ModuleToggleRow {
+                            label: "隱私模式";
+                            checked <=> root.privacy-mode;
+                            changed => { root.settings-changed(); }
+                        }
+
+                        Text {
+                            text: "啟用後不保留錄音檔，並於輸出後清除剪貼簿";
+                            font-size: Tokens.font-xs;
+                            color: Tokens.text-secondary;
+                            wrap: word-wrap;
                         }
 
                         // ── 功能模組 ──────────────────────────
