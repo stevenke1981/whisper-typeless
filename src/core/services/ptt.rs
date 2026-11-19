@@ -1,7 +1,7 @@
 // ─── PTT WH_KEYBOARD_LL 靜態狀態（hook callback 無法捕獲環境）──────────────
 
-use crate::AppWindow;
-use slint::ComponentHandle;
+use crate::core::event::CoreEvent;
+use crate::core::Notifier;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
 use tracing::{error, info};
@@ -187,7 +187,8 @@ unsafe fn inject_modifier_key_ups(rel_mask: u32) {
 
 // ─── PTT 快捷鍵（WH_KEYBOARD_LL 事件驅動）──────────────────────────────────
 
-pub fn setup_ptt_hotkey(ui: &AppWindow, initial_hotkey: String) -> mpsc::Sender<String> {
+/// 安裝 PTT 鍵盤 hook；按下 / 放開時送出 `CoreEvent::PttKey`（不會碰視窗焦點）。
+pub fn spawn_ptt_hotkey(initial_hotkey: String, notifier: Notifier) -> mpsc::Sender<String> {
     // outer_tx is returned to callers; inner_rx is used by the hook thread.
     // The adapter thread bridges the two and posts WM_APP to wake GetMessageA.
     let (outer_tx, outer_rx) = mpsc::channel::<String>();
@@ -289,26 +290,30 @@ pub fn setup_ptt_hotkey(ui: &AppWindow, initial_hotkey: String) -> mpsc::Sender<
         }
     });
 
-    // 執行緒 B：接收事件 → 呼叫 UI toggle
-    let ui_weak = ui.as_weak();
+    // 執行緒 B：接收事件 → 通知控制器
     std::thread::spawn(move || {
         while let Ok(is_down) = event_rx.recv() {
-            let u = ui_weak.clone();
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(ui) = u.upgrade() {
-                    if is_down != ui.get_is_recording() {
-                        ui.invoke_toggle_recording();
-                    }
-                }
-            });
+            notifier.send(CoreEvent::PttKey(is_down));
         }
     });
 
     #[cfg(not(windows))]
     {
-        let _ = ui.as_weak();
         info!("PTT 快捷鍵僅支援 Windows（設定: {}）", initial_hotkey);
     }
 
     hotkey_tx
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_default_ptt_hotkey() {
+        // bit0=Alt bit1=Ctrl bit2=Shift
+        assert_eq!(parse_ptt_hotkey("Ctrl+Alt+L"), (0b011, 'L' as u32));
+        assert_eq!(parse_ptt_hotkey("Shift+F2").0, 0b100);
+        assert_eq!(parse_ptt_hotkey("").1, 'L' as u32);
+    }
 }

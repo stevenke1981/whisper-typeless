@@ -1,29 +1,26 @@
-pub mod file_mode;
-pub mod hotkey;
-pub mod model;
-pub mod ptt;
-pub mod recording;
-pub mod templates;
-pub mod window;
+//! Slint 轉接層：把 `AppWindow` 接到 UI 無關的 [`crate::core`]。
+//!
+//! - Slint callback → [`UiCommand`] → [`Controller::handle`]
+//! - 背景 [`CoreEvent`] → [`Notifier`](crate::core::Notifier) 喚醒 →
+//!   `slint::invoke_from_event_loop` → [`Controller::apply`]
+//! - 每次處理完把 [`AppViewState`] 與上次推送的版本比對，只設定有變的屬性（[`sync`]）。
+//!
+//! 使用者在 Slint 中透過雙向綁定直接修改的屬性（設定值、視窗模式…），
+//! 會在處理任何指令 / 事件前先讀回核心狀態（[`sync::pull`]）。
 
-use std::path::PathBuf;
-use std::sync::{
-    atomic::{AtomicBool, AtomicU32, Ordering},
-    Arc, Mutex,
-};
-use tokio::{runtime::Handle as TokioHandle, sync::RwLock};
-use tracing::error;
+mod sync;
+mod window;
 
-use crate::app::AppState;
-use crate::settings::config::AppConfig;
-use crate::settings::ui_settings::conversion_mode_from_str;
-use crate::settings::ui_settings::UiSettings;
-use crate::transcription::opencc::OpenCCProcessor;
-use crate::whisper::WhisperEngine;
+use std::cell::RefCell;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use slint::ComponentHandle;
 
-use crate::{AppWindow, TranscriptSegmentData};
+use crate::app::AppState;
+use crate::core::services::{initial_state, RealBackend};
+use crate::core::{event_channel, AppViewState, Controller, EventQueue, UiCommand, ViewRequest};
+use crate::AppWindow;
 
 // ─── 臨時 stderr 抑制（Slint/parley→ICU4X 啟動雜訊）──────────────────────
 //
@@ -108,26 +105,101 @@ impl IcuStderrGuard {
     }
 }
 
-pub(crate) struct LoadedWhisperModel {
-    pub(crate) model_id: String,
-    pub(crate) model_path: PathBuf,
-    pub(crate) engine: WhisperEngine,
+// ─── 轉接器狀態（只存在於 UI 執行緒）─────────────────────────────────────────
+
+struct Adapter {
+    controller: Controller,
+    queue: EventQueue,
+    /// 上次推送到 AppWindow 的狀態（差異比較用）。
+    last: AppViewState,
+    ui: slint::Weak<AppWindow>,
 }
 
-#[derive(Clone)]
-pub(crate) struct ModelRuntime {
-    pub(crate) cache: Arc<Mutex<Option<LoadedWhisperModel>>>,
-    pub(crate) generation: Arc<AtomicU32>,
-    pub(crate) download_in_progress: Arc<AtomicBool>,
-}
+impl Adapter {
+    fn sync_from_window(&mut self, ui: &AppWindow) {
+        sync::pull(ui, self.controller.state_mut());
+        sync::pull(ui, &mut self.last);
+    }
 
-impl ModelRuntime {
-    pub(crate) fn new() -> Self {
-        Self {
-            cache: Arc::new(Mutex::new(None)),
-            generation: Arc::new(AtomicU32::new(0)),
-            download_in_progress: Arc::new(AtomicBool::new(false)),
+    fn sync_to_window(&mut self, ui: &AppWindow) {
+        let state = self.controller.state();
+        if state.is_recording != self.last.is_recording {
+            crate::ui::window_icon::update(state.is_recording);
         }
+        sync::push(ui, state, Some(&self.last));
+        self.last = state.clone();
+    }
+}
+
+thread_local! {
+    static ADAPTER: RefCell<Option<Adapter>> = const { RefCell::new(None) };
+}
+
+/// 在 UI 執行緒處理一個使用者操作。
+fn dispatch(cmd: UiCommand) {
+    let outcome = ADAPTER.with(|cell| {
+        let Ok(mut guard) = cell.try_borrow_mut() else {
+            return Err(cmd); // 重入：稍後再處理
+        };
+        let Some(adapter) = guard.as_mut() else {
+            return Ok(None);
+        };
+        let Some(ui) = adapter.ui.upgrade() else {
+            return Ok(None);
+        };
+        adapter.sync_from_window(&ui);
+        let requests = adapter.controller.handle(cmd);
+        adapter.sync_to_window(&ui);
+        Ok(Some((ui, requests)))
+    });
+    match outcome {
+        Ok(Some((ui, requests))) => {
+            for request in requests {
+                perform(&ui, request);
+            }
+        }
+        Ok(None) => {}
+        Err(cmd) => {
+            let _ = slint::invoke_from_event_loop(move || dispatch(cmd));
+        }
+    }
+}
+
+/// 在 UI 執行緒套用所有待處理的背景事件。
+fn drain_events() {
+    let busy = ADAPTER.with(|cell| {
+        let Ok(mut guard) = cell.try_borrow_mut() else {
+            return true;
+        };
+        let Some(adapter) = guard.as_mut() else {
+            return false;
+        };
+        let events = adapter.queue.drain();
+        if events.is_empty() {
+            return false;
+        }
+        let Some(ui) = adapter.ui.upgrade() else {
+            return false;
+        };
+        adapter.sync_from_window(&ui);
+        for event in events {
+            adapter.controller.apply(event);
+        }
+        adapter.sync_to_window(&ui);
+        false
+    });
+    if busy {
+        let _ = slint::invoke_from_event_loop(drain_events);
+    }
+}
+
+fn perform(ui: &AppWindow, request: ViewRequest) {
+    match request {
+        ViewRequest::ApplyWindowGeometry => window::apply_window_geometry(ui),
+        ViewRequest::HideWindow => {
+            let _ = ui.window().hide();
+        }
+        ViewRequest::StartDrag => window::start_drag(ui),
     }
 }
 
@@ -137,211 +209,93 @@ pub async fn launch(state: Arc<RwLock<AppState>>) -> anyhow::Result<()> {
     // 抑制 Slint/parley→ICU4X 初始化的 stderr 雜訊
     let _icu_guard = IcuStderrGuard::new();
     let ui = AppWindow::new()?;
-    ui.set_app_title(crate::APP_NAME.into());
 
-    // 設定唯一來源：AppConfig（config.toml）。在接上任何 callback 前套用到 UI。
+    // 設定唯一來源：AppConfig（config.toml）。
     let (config, config_store, startup_warnings) = {
         let s = state.read().await;
         let c = s.config.read().await.clone();
         (c, Arc::clone(&s.config), s.startup_warnings.clone())
     };
-    apply_ui_settings(&ui, &UiSettings::from_config(&config));
-    show_startup_warnings(&ui, &startup_warnings);
+    let view = initial_state(&config, &startup_warnings).await;
 
-    let selected_model_id: Arc<Mutex<String>> =
-        Arc::new(Mutex::new(ui.get_selected_model_id().to_string()));
-    let recording_handle: Arc<Mutex<Option<recording::RecordingHandle>>> =
-        Arc::new(Mutex::new(None));
-    let transcript_list: Arc<Mutex<Vec<TranscriptSegmentData>>> = Arc::new(Mutex::new(Vec::new()));
-    let model_runtime = ModelRuntime::new();
+    // 背景 → UI：喚醒時排入 Slint 事件迴圈
+    let (notifier, queue) = event_channel(|| {
+        let _ = slint::invoke_from_event_loop(drain_events);
+    });
 
-    model::setup_model_entries(&ui, &config).await?;
-    model::setup_model_callbacks(
-        &ui,
-        &config,
-        Arc::clone(&selected_model_id),
-        model_runtime.clone(),
-    )?;
-    if !model::preload_selected_model(
-        &ui,
-        &config,
-        &model_runtime,
-        ui.get_selected_model_id().to_string(),
-    ) {
-        model::spawn_model_select_or_download(
-            TokioHandle::current(),
-            ui.as_weak(),
-            AppConfig::models_dir().unwrap_or_else(|_| PathBuf::from(".")),
-            ui.get_selected_model_id().to_string(),
-            Arc::clone(&selected_model_id),
-            model_runtime.clone(),
-            config.clone(),
-            model::whisper_params_from_ui(&ui, &config),
-            true,
-        );
-    }
-    templates::setup_template_callbacks(&ui).await;
-    recording::setup_recording_callbacks(
-        &ui,
+    let mut backend = RealBackend::new(
         config.clone(),
-        Arc::clone(&selected_model_id),
-        Arc::clone(&recording_handle),
-        Arc::clone(&transcript_list),
-        model_runtime.clone(),
+        config_store,
+        view.selected_model_id.clone(),
+        notifier,
     );
-    file_mode::setup_file_mode_callbacks(
-        &ui,
-        &config,
-        Arc::clone(&selected_model_id),
-        model_runtime.clone(),
-    )?;
-    let hotkey_tx = hotkey::setup_global_hotkey(&ui, ui.get_hotkey().to_string());
-    ptt::PTT_HOOK_ENABLED.store(ui.get_ptt_mode(), Ordering::Relaxed);
-    let ptt_hotkey_tx = ptt::setup_ptt_hotkey(&ui, ui.get_ptt_hotkey().to_string());
+    backend.start_background(&view.hotkey, &view.ptt_hotkey, view.ptt_mode);
+
+    // 在接上任何 callback 前把完整狀態推到 UI
+    sync::push(&ui, &view, None);
+    let mut controller = Controller::new(view, config, Box::new(backend));
+    controller.start();
+    sync::push(&ui, controller.state(), None);
+    let last = controller.state().clone();
+    ADAPTER.with(|cell| {
+        *cell.borrow_mut() = Some(Adapter {
+            controller,
+            queue,
+            last,
+            ui: ui.as_weak(),
+        });
+    });
+
+    wire_callbacks(&ui);
     // Set initial (idle) window icon after the window is ready.
     crate::ui::window_icon::update(false);
 
-    // Wire settings-changed → update toggle hotkey + PTT hotkey + PTT enabled flag
-    {
-        let ui_ref = ui.as_weak();
-        let tx = hotkey_tx.clone();
-        let ptt_tx = ptt_hotkey_tx.clone();
-        ui.on_settings_changed(move || {
-            if let Some(ui) = ui_ref.upgrade() {
-                let _ = tx.send(ui.get_hotkey().to_string());
-                let _ = ptt_tx.send(ui.get_ptt_hotkey().to_string());
-                ptt::PTT_HOOK_ENABLED.store(ui.get_ptt_mode(), Ordering::Relaxed);
-            }
-        });
-    }
-
-    // Wire save-settings → UI 快照套用到 AppConfig → 寫入 config.toml
-    {
-        let ui_ref = ui.as_weak();
-        ui.on_save_settings(move || {
-            let Some(ui) = ui_ref.upgrade() else { return };
-
-            let snapshot = ui_settings_from_window(&ui);
-            let result = match config_store.try_write() {
-                Ok(mut cfg) => {
-                    snapshot.apply_to(&mut cfg);
-                    cfg.save()
-                }
-                Err(_) => Err(anyhow::anyhow!("設定正被其他工作使用中，請稍後再試")),
-            };
-
-            match result {
-                Ok(()) => {
-                    ui.set_save_status("✓ 已儲存".into());
-                    // Clear feedback after 2 s
-                    let u = ui_ref.clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_secs(2));
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = u.upgrade() {
-                                if ui.get_save_status() == "✓ 已儲存" {
-                                    ui.set_save_status("".into());
-                                }
-                            }
-                        });
-                    });
-                }
-                Err(e) => {
-                    error!("設定儲存失敗: {e}");
-                    ui.set_save_status("✗ 儲存失敗".into());
-                }
-            }
-        });
-    }
-
-    // ── v2.2 新增：浮動視窗 ↔ 完整視窗切換 ─────────────────────
-    window::setup_floating_mode_callbacks(&ui);
-
-    ui.run()?;
+    let result = ui.run();
+    ADAPTER.with(|cell| cell.borrow_mut().take());
+    result?;
     Ok(())
 }
 
-// ─── 設定 ↔ UI ────────────────────────────────────────────────────────────────
-
-/// 將設定快照寫入 UI 屬性。
-fn apply_ui_settings(ui: &AppWindow, s: &UiSettings) {
-    ui.set_vad_threshold(s.vad_threshold);
-    ui.set_silence_timeout(s.silence_timeout_ms);
-    ui.set_n_threads(s.n_threads);
-    ui.set_use_gpu(s.use_gpu);
-    ui.set_temperature(s.temperature);
-    ui.set_conversion_mode(s.conversion_mode.clone().into());
-    ui.set_append_newline(s.append_newline);
-    ui.set_hotkey(s.hotkey.clone().into());
-    ui.set_ptt_hotkey(s.ptt_hotkey.clone().into());
-    ui.set_ptt_mode(s.ptt_mode);
-    ui.set_mod_vad(s.mod_vad);
-    ui.set_mod_context(s.mod_context);
-    ui.set_mod_opencc(s.mod_opencc);
-    ui.set_mod_inject(s.mod_inject);
-    ui.set_mod_waveform(s.mod_waveform);
-    ui.set_mod_history(s.mod_history);
-    ui.set_clipboard_enabled(s.clipboard_enabled);
-    ui.set_inject_enabled(s.inject_enabled);
-    ui.set_privacy_mode(s.privacy_mode);
-    if !s.selected_model_id.is_empty() {
-        ui.set_selected_model_id(s.selected_model_id.clone().into());
-    }
-}
-
-/// 從 UI 屬性讀出設定快照。
-fn ui_settings_from_window(ui: &AppWindow) -> UiSettings {
-    UiSettings {
-        vad_threshold: ui.get_vad_threshold(),
-        silence_timeout_ms: ui.get_silence_timeout(),
-        n_threads: ui.get_n_threads(),
-        use_gpu: ui.get_use_gpu(),
-        temperature: ui.get_temperature(),
-        conversion_mode: ui.get_conversion_mode().to_string(),
-        hotkey: ui.get_hotkey().to_string(),
-        ptt_hotkey: ui.get_ptt_hotkey().to_string(),
-        ptt_mode: ui.get_ptt_mode(),
-        mod_vad: ui.get_mod_vad(),
-        mod_context: ui.get_mod_context(),
-        mod_opencc: ui.get_mod_opencc(),
-        mod_inject: ui.get_mod_inject(),
-        mod_waveform: ui.get_mod_waveform(),
-        mod_history: ui.get_mod_history(),
-        append_newline: ui.get_append_newline(),
-        clipboard_enabled: ui.get_clipboard_enabled(),
-        inject_enabled: ui.get_inject_enabled(),
-        privacy_mode: ui.get_privacy_mode(),
-        selected_model_id: ui.get_selected_model_id().to_string(),
-    }
-}
-
-/// 啟動警告（設定檔損毀等）→ 錯誤紀錄 + 狀態列。
-fn show_startup_warnings(ui: &AppWindow, warnings: &[String]) {
-    if warnings.is_empty() {
-        return;
-    }
-    let entries: Vec<slint::SharedString> = warnings.iter().map(|w| w.as_str().into()).collect();
-    ui.set_error_log(slint::ModelRc::new(slint::VecModel::from(entries)));
-    ui.set_status_text("⚠ 設定載入有問題，詳見錯誤紀錄".into());
-}
-
-// ─── 中文轉換輔助 ──────────────────────────────────────────────────────────────
-
-pub(super) fn convert_chinese_text(
-    text: &str,
-    opencc_enabled: bool,
-    conversion_mode: &str,
-) -> String {
-    if !opencc_enabled {
-        return text.to_string();
-    }
-
-    let mode = conversion_mode_from_str(conversion_mode);
-    match OpenCCProcessor::new(mode) {
-        Ok(processor) => processor.convert(text),
-        Err(e) => {
-            error!("OpenCC 轉換初始化失敗: {e}");
-            text.to_string()
+fn wire_callbacks(ui: &AppWindow) {
+    // 視窗
+    let w = ui.as_weak();
+    ui.on_toggle_floating_mode(move || {
+        if let Some(ui) = w.upgrade() {
+            dispatch(UiCommand::SetFloatingMode(ui.get_floating_mode()));
         }
-    }
+    });
+    let w = ui.as_weak();
+    ui.on_toggle_floating_expanded(move || {
+        if let Some(ui) = w.upgrade() {
+            dispatch(UiCommand::SetFloatingExpanded(ui.get_floating_expanded()));
+        }
+    });
+    ui.on_request_close(|| dispatch(UiCommand::RequestClose));
+    ui.on_start_drag(|| dispatch(UiCommand::StartDrag));
+    ui.on_clear_error_log(|| dispatch(UiCommand::ClearErrorLog));
+
+    // 錄音 / 轉錄紀錄 / 模板
+    ui.on_toggle_recording(|| dispatch(UiCommand::ToggleRecording));
+    ui.on_clear_transcript(|| dispatch(UiCommand::ClearTranscript));
+    ui.on_template_selected(|id| dispatch(UiCommand::TemplateSelected(id.to_string())));
+    ui.on_template_save(|original, name, prompt| {
+        dispatch(UiCommand::TemplateSave {
+            original: original.to_string(),
+            name: name.to_string(),
+            prompt: prompt.to_string(),
+        })
+    });
+    ui.on_template_delete(|name| dispatch(UiCommand::TemplateDelete(name.to_string())));
+
+    // 設定 / 模型
+    ui.on_settings_changed(|| dispatch(UiCommand::SettingsChanged));
+    ui.on_save_settings(|| dispatch(UiCommand::SaveSettings));
+    ui.on_open_model_manager(|| dispatch(UiCommand::OpenModelManager));
+    ui.on_model_select_or_download(|id| dispatch(UiCommand::ModelSelectOrDownload(id.to_string())));
+
+    // 檔案模式
+    ui.on_open_file_dialog(|| dispatch(UiCommand::OpenFileDialog));
+    ui.on_start_file_transcription(|| dispatch(UiCommand::StartFileTranscription));
+    ui.on_file_copy_result(|| dispatch(UiCommand::FileCopyResult));
+    ui.on_file_export_result(|fmt| dispatch(UiCommand::FileExportResult(fmt.to_string())));
 }

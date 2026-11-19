@@ -1,42 +1,42 @@
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc,
 };
 use std::time::Instant;
 use tracing::{error, info};
 
-use slint::{ModelRc, VecModel};
-
 use crate::audio::{
     AudioSegment, Resampler, VoiceActivityDetector, TARGET_SAMPLE_RATE, WAVEFORM_BAR_COUNT,
 };
-use crate::ui::bridge::ModelRuntime;
-use crate::whisper::WhisperParams;
-use crate::{AppWindow, TranscriptSegmentData};
+use crate::core::backend::RecordingRequest;
+use crate::core::event::CoreEvent;
+use crate::core::services::ModelRuntime;
+use crate::core::Notifier;
 
 use super::io::save_recording_wav;
 use super::transcribe::transcribe_full_recording;
 
-#[allow(clippy::too_many_arguments)]
+pub(crate) struct PipelineJob {
+    pub(crate) model_id: String,
+    pub(crate) model_path: std::path::PathBuf,
+    pub(crate) sample_rate: u32,
+    pub(crate) req: RecordingRequest,
+}
+
 pub(super) fn run_recording_pipeline(
-    model_id: String,
-    model_path: std::path::PathBuf,
-    whisper_params: WhisperParams,
-    sample_rate: u32,
-    vad_threshold: f32,
-    vad_timeout_ms: u64,
-    clipboard_enabled: bool,
-    inject_enabled: bool,
-    opencc_enabled: bool,
-    conversion_mode: String,
-    privacy_mode: bool,
+    job: PipelineJob,
     audio_rx: std::sync::mpsc::Receiver<Vec<f32>>,
     level_rx: std::sync::mpsc::Receiver<f32>,
     stop_flag: Arc<AtomicBool>,
-    ui_weak: slint::Weak<AppWindow>,
-    transcript_list: Arc<Mutex<Vec<TranscriptSegmentData>>>,
+    notifier: Notifier,
     model_runtime: ModelRuntime,
 ) {
+    let PipelineJob {
+        model_id,
+        model_path,
+        sample_rate,
+        req,
+    } = job;
     let mut resampler = match Resampler::new(sample_rate) {
         Ok(r) => r,
         Err(e) => {
@@ -44,7 +44,7 @@ pub(super) fn run_recording_pipeline(
             return;
         }
     };
-    let mut vad = VoiceActivityDetector::new(vad_threshold, vad_timeout_ms);
+    let mut vad = VoiceActivityDetector::new(req.vad_threshold, req.vad_timeout_ms);
 
     // 波形環形緩衝（20 條 bar）
     let mut bar_buf: Vec<f32> = vec![0.0f32; WAVEFORM_BAR_COUNT];
@@ -60,7 +60,7 @@ pub(super) fn run_recording_pipeline(
                     &mut resampler,
                     &mut vad,
                     &mut full_samples,
-                    &ui_weak,
+                    &notifier,
                 );
             }
             let _ = vad.flush();
@@ -69,7 +69,7 @@ pub(super) fn run_recording_pipeline(
                 info!("停止錄音，但沒有收到音訊樣本");
             } else {
                 let duration_ms = (full_samples.len() as u64 * 1000) / TARGET_SAMPLE_RATE as u64;
-                let wav_path = if privacy_mode {
+                let wav_path = if req.privacy_mode {
                     info!("隱私模式啟用，跳過錄音檔案儲存");
                     None
                 } else {
@@ -92,15 +92,9 @@ pub(super) fn run_recording_pipeline(
                     &model_runtime,
                     model_id.clone(),
                     model_path.clone(),
-                    &whisper_params,
+                    &req,
                     segment,
-                    clipboard_enabled,
-                    inject_enabled,
-                    opencc_enabled,
-                    conversion_mode.clone(),
-                    privacy_mode,
-                    &ui_weak,
-                    &transcript_list,
+                    &notifier,
                     wav_path,
                 );
             }
@@ -108,7 +102,13 @@ pub(super) fn run_recording_pipeline(
         }
 
         while let Ok(chunk) = audio_rx.try_recv() {
-            process_recording_chunk(chunk, &mut resampler, &mut vad, &mut full_samples, &ui_weak);
+            process_recording_chunk(
+                chunk,
+                &mut resampler,
+                &mut vad,
+                &mut full_samples,
+                &notifier,
+            );
         }
 
         // 更新音量等級 → 波形
@@ -120,13 +120,7 @@ pub(super) fn run_recording_pipeline(
 
         if last_wave_tick.elapsed().as_millis() >= 80 {
             last_wave_tick = Instant::now();
-            let bars = bar_buf.clone();
-            let u = ui_weak.clone();
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(ui) = u.upgrade() {
-                    ui.set_waveform_bars(ModelRc::new(VecModel::from(bars)));
-                }
-            });
+            notifier.send(CoreEvent::Waveform(bar_buf.clone()));
         }
 
         if stop_flag.load(Ordering::SeqCst) {
@@ -138,14 +132,7 @@ pub(super) fn run_recording_pipeline(
 
     // 清理
     info!("錄音管線結束");
-    let u = ui_weak.clone();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(ui) = u.upgrade() {
-            ui.set_waveform_bars(ModelRc::new(VecModel::from(vec![0.0f32; 20])));
-            ui.set_is_processing(false);
-            ui.set_audio_level(0.0);
-        }
-    });
+    notifier.send(CoreEvent::PipelineFinished);
 }
 
 fn process_recording_chunk(
@@ -153,7 +140,7 @@ fn process_recording_chunk(
     resampler: &mut Resampler,
     vad: &mut VoiceActivityDetector,
     full_samples: &mut Vec<f32>,
-    ui_weak: &slint::Weak<AppWindow>,
+    notifier: &Notifier,
 ) {
     let resampled = match resampler.process(&chunk) {
         Ok(r) => r,
@@ -168,37 +155,15 @@ fn process_recording_chunk(
     for event in vad.process(&resampled) {
         use crate::audio::VadEvent;
         match event {
-            VadEvent::SpeechStart => {
-                let u = ui_weak.clone();
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = u.upgrade() {
-                        ui.set_current_partial("聆聽中...".into());
-                        ui.set_is_processing(true);
-                    }
-                });
-            }
+            VadEvent::SpeechStart => notifier.send(CoreEvent::SpeechStarted),
             VadEvent::Segment(segment) => {
                 info!(
                     "VAD 偵測到語音段落，長度 {}ms；PTT 模式保留至停止後整段轉錄",
                     segment.duration_ms
                 );
             }
-            VadEvent::Silence => {
-                let u = ui_weak.clone();
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = u.upgrade() {
-                        ui.set_current_partial("".into());
-                    }
-                });
-            }
-            VadEvent::SpeechContinue { level } => {
-                let u = ui_weak.clone();
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = u.upgrade() {
-                        ui.set_audio_level(level);
-                    }
-                });
-            }
+            VadEvent::Silence => notifier.send(CoreEvent::Silence),
+            VadEvent::SpeechContinue { level } => notifier.send(CoreEvent::Level(level)),
         }
     }
 }
