@@ -497,7 +497,11 @@ fn model_select_in_settings_and_disabled_while_downloading() {
 
 #[test]
 fn toolbar_buttons_map_to_commands() {
-    let mut app = app();
+    let mut app = app_with(AppViewState {
+        error_log: vec!["10:00:00 錯誤".into()],
+        ..AppViewState::default()
+    })
+    .0;
     click(&mut app, 560.0, 680.0, is_click(Msg::ToggleFloating));
     assert_eq!(
         app.sent,
@@ -512,12 +516,7 @@ fn toolbar_buttons_map_to_commands() {
     assert_eq!(app.sent, vec![UiCommand::SetFloatingMode(false)]);
     // 錯誤徽章、分頁、關閉
     app.sent.clear();
-    click(
-        &mut app,
-        560.0,
-        680.0,
-        is_click(Msg::Core(UiCommand::SetShowErrorLog(true))),
-    );
+    click(&mut app, 560.0, 680.0, is_click(Msg::ToggleErrorLog));
     click(
         &mut app,
         560.0,
