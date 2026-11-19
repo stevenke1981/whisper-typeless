@@ -42,6 +42,9 @@ jobs:
   vulkan:
     name: vulkan check / clippy / build
     runs-on: windows-latest
+    env:
+      # whisper.cpp 的 vulkan-shaders-gen 巢狀 CMake 路徑會超過 250 字元上限，target 需放在短路徑
+      CARGO_TARGET_DIR: C:\t
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -50,6 +53,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: img-${{ env.ImageVersion }}-vulkan
+          # 目標資料夾改到 C:\t（見下方），不快取 target，只快取 registry
+          cache-targets: false
       - name: Set LIBCLANG_PATH
         shell: pwsh
         run: |
