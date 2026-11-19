@@ -4,6 +4,8 @@
 //! 檔案、熱鍵）；測試用假實作只記錄呼叫，不碰硬體。所有長時間工作都在背景執行，
 //! 結果以 [`CoreEvent`](super::CoreEvent) 透過 [`Notifier`](super::Notifier) 回報。
 
+use crate::settings::config::TranscriptionEngine;
+use crate::settings::secret::Secret;
 use crate::settings::ui_settings::UiSettings;
 use crate::whisper::WhisperParams;
 
@@ -18,6 +20,10 @@ pub struct RecordingRequest {
     pub opencc_enabled: bool,
     pub conversion_mode: String,
     pub whisper_params: WhisperParams,
+    /// 轉錄引擎。只有使用者已同意（`openai_consent`）時才會是 `OpenAi`。
+    pub engine: TranscriptionEngine,
+    /// OpenAI 轉錄模型名稱（`engine` 為 `OpenAi` 時使用）。
+    pub openai_model: String,
 }
 
 /// [`Backend::start_recording`] 的結果。
@@ -81,4 +87,8 @@ pub trait Backend {
     fn clear_error_log(&mut self);
     /// 全域錯誤紀錄快照（新到舊）。
     fn error_log_snapshot(&self) -> Vec<String>;
+    /// 儲存（`Some`）或刪除（`None`）OpenAI 金鑰（作業系統憑證存放區，不寫入 config.toml）。
+    fn store_api_key(&mut self, key: Option<Secret>) -> Result<(), String>;
+    /// 憑證存放區是否已有 OpenAI 金鑰。
+    fn has_api_key(&self) -> bool;
 }

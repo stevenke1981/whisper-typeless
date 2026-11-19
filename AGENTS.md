@@ -8,7 +8,7 @@ whisper-typeless：Windows 桌面即時語音轉文字工具。Rust + AcmeUI-Nat
 
 ## 核心價值（修改時不可倒退）
 
-1. **本機隱私**：語音與文字不離開電腦。唯一的對外網路行為是下載模型（URL 來自 `model-catalog.json`）。
+1. **本機隱私優先**：預設引擎為本機 whisper，語音與文字不離開電腦。唯一的例外是使用者在設定中選擇 OpenAI 引擎並明確同意（`[transcription] openai_consent = true`）後，語音會送往 OpenAI 轉錄；其餘唯一的對外網路行為是下載模型（URL 來自 `model-catalog.json`）。API 金鑰只存在作業系統憑證存放區（`Secret` 型別，`Debug` 已遮蔽），不寫入 config.toml 或日誌。
 2. **結果落在焦點視窗**：辨識後寫入剪貼簿並模擬貼上（enigo / SendInput）。
 3. **中文優先**：預設 OpenCC `zh-TW`；另有 `zh-HK`、`zh-CN`、`raw`。
 4. **情境模板**：內建 `TemplateId`（會議、口語、技術、醫療、法律）與使用者 TOML 覆寫；控制初始提示詞與後處理。
@@ -107,7 +107,7 @@ cargo clippy --all-targets --target x86_64-pc-windows-msvc --no-default-features
 - **測試不得依賴音訊硬體、GPU、網路或模型檔案。** 以純邏輯、假資料或 fixture 測試；需要實機驗證的項目寫在 PR 說明中。
 - **提交前 `cargo fmt --all -- --check` 與 `cargo clippy --all-targets -- -D warnings` 必須通過。**
 - **使用者可見字串（UI 文字、對話框、狀態列、錯誤訊息）使用 zh-TW。** 程式註解可用繁體中文。
-- **不要記錄語音或轉錄內容**（包含 info 層級日誌）；不要新增網路呼叫或遙測。
+- **不要記錄語音、轉錄內容或 API 金鑰**（包含 info 層級日誌）；不要新增遙測，也不要新增模型下載與（經同意的）OpenAI 轉錄以外的網路呼叫。
 - 模型網址與校驗值只改 `model-catalog.json`，不要寫進 Rust 或 PowerShell 程式碼。
 - 新增 crate 依賴需有明確理由，並一併更新 `Cargo.lock`。
 - 不要提交執行期產物：`config.toml`、`settings.json*`、`models/`、錄音 WAV、`target/`、任何含憑證的檔案。

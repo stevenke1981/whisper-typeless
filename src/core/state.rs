@@ -87,6 +87,23 @@ pub struct AppViewState {
     pub ptt_mode: bool,
     pub save_status: String,
 
+    // ── 轉錄引擎（WP-A）──
+    /// `"local"` / `"openai"`。
+    pub engine: String,
+    pub openai_model: String,
+    pub openai_consent: bool,
+    /// 憑證存放區是否已有 OpenAI 金鑰（只存在狀態中，不寫入設定檔）。
+    pub openai_key_set: bool,
+
+    // ── 視窗 / 系統匣（WP-B）──
+    pub close_to_tray: bool,
+    pub minimize_to_tray: bool,
+    pub start_minimized: bool,
+    /// 視窗目前縮在系統匣（只存在狀態中）。
+    pub window_hidden: bool,
+    /// 使用者要求結束程式（只存在狀態中；畫面層看到後關閉事件迴圈）。
+    pub quit_requested: bool,
+
     // ── 檔案模式 ──
     pub file_mode: bool,
     pub file_name: String,
@@ -151,6 +168,17 @@ impl Default for AppViewState {
             ptt_mode: true,
             save_status: String::new(),
 
+            engine: "local".into(),
+            openai_model: "gpt-live-transcribe".into(),
+            openai_consent: false,
+            openai_key_set: false,
+
+            close_to_tray: true,
+            minimize_to_tray: false,
+            start_minimized: false,
+            window_hidden: false,
+            quit_requested: false,
+
             file_mode: false,
             file_name: String::new(),
             file_progress: 0.0,
@@ -196,6 +224,12 @@ impl AppViewState {
         if !s.selected_model_id.is_empty() {
             self.selected_model_id = s.selected_model_id.clone();
         }
+        self.engine = s.engine.clone();
+        self.openai_model = s.openai_model.clone();
+        self.openai_consent = s.openai_consent;
+        self.close_to_tray = s.close_to_tray;
+        self.minimize_to_tray = s.minimize_to_tray;
+        self.start_minimized = s.start_minimized;
     }
 
     /// 從狀態讀出設定快照（等同舊版 `ui_settings_from_window`）。
@@ -221,6 +255,12 @@ impl AppViewState {
             inject_enabled: self.inject_enabled,
             privacy_mode: self.privacy_mode,
             selected_model_id: self.selected_model_id.clone(),
+            engine: self.engine.clone(),
+            openai_model: self.openai_model.clone(),
+            openai_consent: self.openai_consent,
+            close_to_tray: self.close_to_tray,
+            minimize_to_tray: self.minimize_to_tray,
+            start_minimized: self.start_minimized,
         }
     }
 
@@ -264,10 +304,29 @@ mod tests {
             hotkey: "Ctrl+Alt+H".into(),
             n_threads: 7,
             selected_model_id: "base".into(),
+            engine: "openai".into(),
+            openai_model: "m".into(),
+            openai_consent: true,
+            close_to_tray: false,
+            minimize_to_tray: true,
+            start_minimized: true,
             ..UiSettings::default()
         };
         let state = AppViewState::from_settings(&s);
         assert_eq!(state.ui_settings(), s);
+    }
+
+    #[test]
+    fn view_state_defaults_match_settings_defaults() {
+        let state = AppViewState::default();
+        let s = UiSettings::default();
+        assert_eq!(state.engine, s.engine);
+        assert_eq!(state.openai_model, s.openai_model);
+        assert_eq!(state.openai_consent, s.openai_consent);
+        assert_eq!(state.close_to_tray, s.close_to_tray);
+        assert_eq!(state.minimize_to_tray, s.minimize_to_tray);
+        assert_eq!(state.start_minimized, s.start_minimized);
+        assert!(!state.openai_key_set && !state.window_hidden && !state.quit_requested);
     }
 
     #[test]

@@ -43,6 +43,12 @@ impl Backend for FakeBackend {
     fn save_template(&mut self, _original: String, _name: String, _prompt: String) {}
     fn delete_template(&mut self, _name: String) {}
     fn clear_error_log(&mut self) {}
+    fn store_api_key(&mut self, _key: Option<crate::settings::Secret>) -> Result<(), String> {
+        Ok(())
+    }
+    fn has_api_key(&self) -> bool {
+        false
+    }
     fn error_log_snapshot(&self) -> Vec<String> {
         vec!["模型下載失敗：連線逾時".into()]
     }

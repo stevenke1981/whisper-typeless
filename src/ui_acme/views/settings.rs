@@ -84,6 +84,24 @@ pub fn panel(v: &mut View, cx: &mut Ctx<'_>, rect: Rect<Logical>) {
     scrollbar(v, cx, body, offset, max, content_h);
 }
 
+// 以下三個區段由後續工作包各自填入；目前不畫任何東西，回傳佔用的高度 0。
+// 簽名一致：(描述樹, 情境, 左緣 x, 起始 y, 內容寬) → 區段高度。
+
+/// 雲端轉錄：引擎選擇、OpenAI 模型、同意說明、金鑰輸入（WP-A）。
+fn cloud_section(_v: &mut View, _cx: &mut Ctx<'_>, _x0: f32, _y: f32, _cw: f32) -> f32 {
+    0.0
+}
+
+/// 系統匣：關閉 / 最小化到系統匣、啟動時最小化（WP-B）。
+fn tray_section(_v: &mut View, _cx: &mut Ctx<'_>, _x0: f32, _y: f32, _cw: f32) -> f32 {
+    0.0
+}
+
+/// GPU 後端 / 模型建議（WP-C）。
+fn gpu_model_section(_v: &mut View, _cx: &mut Ctx<'_>, _x0: f32, _y: f32, _cw: f32) -> f32 {
+    0.0
+}
+
 fn edit(e: SettingEdit) -> Msg {
     Msg::Setting(e)
 }
@@ -222,6 +240,9 @@ fn content(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32) -> f32 {
     );
     y += 40.0;
 
+    // ── 雲端轉錄（WP-A）──
+    y += cloud_section(v, cx, x0, y, cw);
+
     // ── 隱私 ──
     y += section_header(v, t, x0, y, cw, "隱私");
     y += toggle_row(
@@ -251,6 +272,9 @@ fn content(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32) -> f32 {
         s.dark_mode,
         UiCommand::SetDarkMode(!s.dark_mode),
     );
+
+    // ── 系統匣（WP-B）──
+    y += tray_section(v, cx, x0, y, cw);
 
     // ── 功能模組 ──
     y += section_header(v, t, x0, y, cw, "功能模組");
@@ -386,6 +410,9 @@ fn content(v: &mut View, cx: &mut Ctx<'_>, x0: f32, y0: f32, cw: f32) -> f32 {
         }
         y += 36.0;
     }
+
+    // ── GPU / 模型（WP-C）──
+    y += gpu_model_section(v, cx, x0, y, cw);
 
     // ── 模型 ──
     y += 8.0;

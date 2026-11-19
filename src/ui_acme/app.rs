@@ -180,6 +180,10 @@ impl AcmeApp {
             ViewRequest::ApplyWindowGeometry => self.geometry_pending = true,
             ViewRequest::HideWindow => self.requests.push(WindowRequest::Close),
             ViewRequest::StartDrag => self.start_drag(),
+            // WP-B：從系統匣叫回視窗（需 SW_SHOW；目前視窗不會被隱藏，先不處理）。
+            ViewRequest::ShowWindow => {}
+            // WP-B：改為結束事件迴圈並移除系統匣圖示。
+            ViewRequest::Quit => self.requests.push(WindowRequest::Close),
         }
     }
 

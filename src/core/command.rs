@@ -1,5 +1,6 @@
 //! 使用者操作（[`UiCommand`]）與需要由畫面層執行的動作（[`ViewRequest`]）。
 
+use crate::settings::secret::Secret;
 use crate::settings::ui_settings::UiSettings;
 
 /// 畫面層送進 [`Controller::handle`](super::Controller::handle) 的使用者操作。
@@ -61,6 +62,18 @@ pub enum UiCommand {
     SetFileOutputFormat(String),
     /// 一次套用整份設定快照（只改狀態，不寫檔；寫檔請再送 [`UiCommand::SaveSettings`]）。
     UpdateSettings(Box<UiSettings>),
+
+    // ── 雲端轉錄（WP-A）──
+    /// 把 OpenAI 金鑰存入作業系統憑證存放區（不寫入 config.toml）。
+    SetOpenAiKey(Secret),
+    /// 刪除已儲存的 OpenAI 金鑰。
+    ClearOpenAiKey,
+
+    // ── 系統匣（WP-B）──
+    /// 從系統匣叫回視窗（使用者主動操作，可取得焦點；熱鍵 / PTT 路徑不得送此指令）。
+    ShowWindow,
+    /// 結束程式。
+    Quit,
 }
 
 /// 只有畫面層能做的動作（視窗尺寸、隱藏、拖曳）。由 `handle` 回傳。
@@ -72,4 +85,8 @@ pub enum ViewRequest {
     HideWindow,
     /// 開始系統視窗拖曳。
     StartDrag,
+    /// 顯示（從系統匣叫回）視窗。只回應使用者對畫面 / 系統匣的操作。
+    ShowWindow,
+    /// 結束事件迴圈並離開程式。
+    Quit,
 }

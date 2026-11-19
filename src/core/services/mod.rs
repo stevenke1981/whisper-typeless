@@ -21,6 +21,7 @@ use crate::core::event::CoreEvent;
 use crate::core::state::AppViewState;
 use crate::core::Notifier;
 use crate::settings::config::AppConfig;
+use crate::settings::secret::Secret;
 use crate::settings::ui_settings::{conversion_mode_from_str, UiSettings};
 use crate::transcription::opencc::OpenCCProcessor;
 use crate::whisper::{WhisperEngine, WhisperParams};
@@ -308,5 +309,14 @@ impl Backend for RealBackend {
 
     fn error_log_snapshot(&self) -> Vec<String> {
         crate::ui::error_log::global().snapshot_newest_first()
+    }
+
+    // WP-A：改為作業系統憑證存放區。
+    fn store_api_key(&mut self, _key: Option<Secret>) -> Result<(), String> {
+        Err("尚未實作".into())
+    }
+
+    fn has_api_key(&self) -> bool {
+        false
     }
 }

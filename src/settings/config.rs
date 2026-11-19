@@ -17,6 +17,10 @@ pub struct GeneralConfig {
     /// 是否啟用 PTT 模式
     pub ptt_mode: bool,
     pub auto_start: bool,
+    /// 按下關閉鈕時縮到系統匣而非結束程式。
+    pub close_to_tray: bool,
+    /// 最小化時縮到系統匣（隱藏工作列按鈕）。
+    pub minimize_to_tray: bool,
 }
 
 impl Default for GeneralConfig {
@@ -29,6 +33,8 @@ impl Default for GeneralConfig {
             ptt_hotkey: "Ctrl+Alt+L".into(),
             ptt_mode: true,
             auto_start: false,
+            close_to_tray: true,
+            minimize_to_tray: false,
         }
     }
 }
@@ -180,6 +186,61 @@ impl ModuleConfig {
     }
 }
 
+/// 本機 whisper 引擎（預設）。
+pub const ENGINE_LOCAL: &str = "local";
+/// OpenAI 雲端轉錄（需使用者明確同意，見 [`TranscriptionConfig::openai_consent`]）。
+pub const ENGINE_OPENAI: &str = "openai";
+/// OpenAI 轉錄模型預設值。
+pub const DEFAULT_OPENAI_MODEL: &str = "gpt-live-transcribe";
+
+/// 轉錄引擎。設定檔中以字串保存（`"local"` / `"openai"`），未知值一律視為本機。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TranscriptionEngine {
+    #[default]
+    Local,
+    OpenAi,
+}
+
+impl TranscriptionEngine {
+    /// 字串 → 引擎；無法辨識時回退本機（隱私優先）。
+    pub fn from_str_lossy(s: &str) -> Self {
+        if s.eq_ignore_ascii_case(ENGINE_OPENAI) {
+            Self::OpenAi
+        } else {
+            Self::Local
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => ENGINE_LOCAL,
+            Self::OpenAi => ENGINE_OPENAI,
+        }
+    }
+}
+
+/// `[transcription]`：轉錄引擎選擇。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TranscriptionConfig {
+    /// `"local"`（預設）或 `"openai"`。
+    pub engine: String,
+    /// OpenAI 轉錄模型名稱。
+    pub openai_model: String,
+    /// 使用者是否已明確同意把語音傳送到 OpenAI。未同意時一律使用本機引擎。
+    pub openai_consent: bool,
+}
+
+impl Default for TranscriptionConfig {
+    fn default() -> Self {
+        Self {
+            engine: ENGINE_LOCAL.into(),
+            openai_model: DEFAULT_OPENAI_MODEL.into(),
+            openai_consent: false,
+        }
+    }
+}
+
 /// 預設模型 ID（與 UI 初始值一致）
 pub const DEFAULT_MODEL_ID: &str = "small";
 
@@ -206,6 +267,7 @@ impl Default for ModelConfig {
 pub struct AppConfig {
     pub general: GeneralConfig,
     pub model: ModelConfig,
+    pub transcription: TranscriptionConfig,
     pub audio: AudioConfig,
     pub whisper: WhisperParams,
     pub chinese: ChineseConfig,
@@ -241,5 +303,67 @@ impl AppConfig {
             .and_then(|p| p.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| std::path::PathBuf::from("."));
         Ok(base.join("models"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_field_defaults() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.transcription.engine, "local");
+        assert_eq!(cfg.transcription.openai_model, "gpt-live-transcribe");
+        assert!(!cfg.transcription.openai_consent);
+        assert!(cfg.general.close_to_tray);
+        assert!(!cfg.general.minimize_to_tray);
+    }
+
+    #[test]
+    fn old_config_without_new_fields_uses_defaults() {
+        let cfg: AppConfig = toml::from_str("[general]\ntheme = \"dark\"\n").unwrap();
+        assert_eq!(cfg.general.theme, "dark");
+        assert!(cfg.general.close_to_tray);
+        assert!(!cfg.general.minimize_to_tray);
+        assert_eq!(cfg.transcription.engine, ENGINE_LOCAL);
+        assert!(!cfg.transcription.openai_consent);
+    }
+
+    #[test]
+    fn new_fields_round_trip_through_toml() {
+        let mut cfg = AppConfig::default();
+        cfg.transcription.engine = ENGINE_OPENAI.into();
+        cfg.transcription.openai_model = "other-model".into();
+        cfg.transcription.openai_consent = true;
+        cfg.general.close_to_tray = false;
+        cfg.general.minimize_to_tray = true;
+        let text = toml::to_string_pretty(&cfg).unwrap();
+        assert!(text.contains("[transcription]"));
+        let back: AppConfig = toml::from_str(&text).unwrap();
+        assert_eq!(back.transcription.engine, "openai");
+        assert_eq!(back.transcription.openai_model, "other-model");
+        assert!(back.transcription.openai_consent);
+        assert!(!back.general.close_to_tray);
+        assert!(back.general.minimize_to_tray);
+    }
+
+    #[test]
+    fn engine_parse_falls_back_to_local() {
+        assert_eq!(
+            TranscriptionEngine::from_str_lossy("openai"),
+            TranscriptionEngine::OpenAi
+        );
+        assert_eq!(
+            TranscriptionEngine::from_str_lossy("local"),
+            TranscriptionEngine::Local
+        );
+        assert_eq!(
+            TranscriptionEngine::from_str_lossy("bogus"),
+            TranscriptionEngine::Local
+        );
+        for e in [TranscriptionEngine::Local, TranscriptionEngine::OpenAi] {
+            assert_eq!(TranscriptionEngine::from_str_lossy(e.as_str()), e);
+        }
     }
 }
