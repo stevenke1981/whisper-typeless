@@ -887,3 +887,107 @@ fn window_config_follows_mode_and_is_borderless() {
     assert_eq!((floating.width, floating.height), (380.0, 52.0));
     assert!(floating.title.contains("whisper-typeless"));
 }
+
+// ── 系統匣 / 視窗隱藏 ────────────────────────────────────────────────────────
+
+#[test]
+fn close_without_tray_still_closes_window() {
+    let mut app = app();
+    app.dispatch(Msg::Core(UiCommand::RequestClose));
+    assert!(app.pending_requests().contains(&WindowRequest::Close));
+    assert!(app.quitting);
+}
+
+#[test]
+fn close_with_tray_hides_instead_of_closing() {
+    let mut app = app();
+    app.tray_ok = true;
+    app.dispatch(Msg::Core(UiCommand::RequestClose));
+    assert!(app.state().window_hidden);
+    assert!(!app.pending_requests().contains(&WindowRequest::Close));
+    assert!(!app.quitting);
+}
+
+#[test]
+fn close_requested_vetoed_only_with_tray_and_setting() {
+    let w = WindowId(1);
+    let mut app = app();
+    // 無系統匣：放行並標記結束
+    assert!(app.close_requested(w));
+    assert!(app.state().quit_requested);
+
+    let mut app = self::app();
+    app.tray_ok = true;
+    assert!(!app.close_requested(w), "Alt+F4 應被否決並縮到系統匣");
+    assert!(app.state().window_hidden);
+
+    let mut app = self::app();
+    app.tray_ok = true;
+    app.controller.state_mut().close_to_tray = false;
+    assert!(app.close_requested(w));
+
+    // 已在結束流程時不再否決
+    let mut app = self::app();
+    app.tray_ok = true;
+    app.request_quit();
+    assert!(app.close_requested(w));
+}
+
+#[test]
+fn quit_request_closes_once() {
+    let mut app = app();
+    app.dispatch(Msg::Core(UiCommand::Quit));
+    app.dispatch(Msg::Core(UiCommand::Quit));
+    let closes = app
+        .pending_requests()
+        .iter()
+        .filter(|r| **r == WindowRequest::Close)
+        .count();
+    assert_eq!(closes, 1);
+}
+
+#[test]
+fn tray_quit_event_closes_window() {
+    let (mut app, notifier) = app_with(AppViewState::default());
+    notifier.send(CoreEvent::Tray(crate::core::TrayAction::Quit));
+    assert!(app.pump());
+    assert!(app.pending_requests().contains(&WindowRequest::Close));
+}
+
+#[test]
+fn minimize_hides_only_when_enabled_and_tray_present() {
+    let mut app = app();
+    app.dispatch(Msg::Minimize);
+    assert!(app.pending_requests().contains(&WindowRequest::Minimize));
+    assert!(!app.state().window_hidden);
+
+    let mut app = self::app();
+    app.tray_ok = true;
+    app.controller.state_mut().minimize_to_tray = true;
+    app.dispatch(Msg::Minimize);
+    assert!(app.state().window_hidden);
+    assert!(!app.pending_requests().contains(&WindowRequest::Minimize));
+}
+
+#[test]
+fn hotkey_events_do_not_change_window_visibility() {
+    let (mut app, notifier) = app_with(AppViewState::default());
+    app.tray_ok = true;
+    app.controller.state_mut().window_hidden = true;
+    app.shown = false;
+    notifier.send(CoreEvent::HotkeyPressed);
+    assert!(app.pump());
+    assert!(app.state().window_hidden);
+    assert!(!app.shown);
+    assert!(!app.pending_requests().contains(&WindowRequest::Focus));
+}
+
+#[test]
+fn tray_show_marks_window_visible_again() {
+    let (mut app, notifier) = app_with(AppViewState::default());
+    app.controller.state_mut().window_hidden = true;
+    app.shown = false;
+    notifier.send(CoreEvent::Tray(crate::core::TrayAction::ToggleWindow));
+    app.pump();
+    assert!(!app.state().window_hidden);
+}

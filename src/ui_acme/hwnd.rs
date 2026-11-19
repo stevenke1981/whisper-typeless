@@ -59,9 +59,10 @@ mod imp {
     use winapi::um::processthreadsapi::GetCurrentProcessId;
     use winapi::um::winuser::{
         EnumWindows, GetMonitorInfoW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
-        IsWindowVisible, MonitorFromWindow, SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST,
-        MONITORINFO, MONITOR_DEFAULTTONEAREST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        SWP_NOZORDER,
+        IsIconic, IsWindowVisible, MonitorFromWindow, SetForegroundWindow, SetWindowPos,
+        ShowWindow, HWND_NOTOPMOST, HWND_TOPMOST, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_RESTORE, SW_SHOW,
+        SW_SHOWNOACTIVATE,
     };
 
     struct Search {
@@ -183,6 +184,40 @@ mod imp {
         place(hwnd, target, cur)
     }
 
+    /// 隱藏視窗（SW_HIDE）。不影響焦點視窗以外的任何東西。
+    pub fn hide(hwnd: isize) -> bool {
+        // SAFETY: hwnd 來自 find_own_hwnd；ShowWindow 回傳先前是否可見，不代表失敗。
+        unsafe { ShowWindow(hwnd as HWND, SW_HIDE) };
+        true
+    }
+
+    /// 視窗是否被最小化。
+    pub fn is_iconic(hwnd: isize) -> bool {
+        // SAFETY: 單純查詢。
+        unsafe { IsIconic(hwnd as HWND) != 0 }
+    }
+
+    /// 顯示視窗。`activate` 為 true 時還原並設為前景（只用於使用者點系統匣的情形，
+    /// 熱鍵 / PTT 路徑一律傳 false）；false 時以 SW_SHOWNOACTIVATE 顯示。
+    pub fn show(hwnd: isize, activate: bool) -> bool {
+        // SAFETY: 同上。
+        unsafe {
+            let h = hwnd as HWND;
+            if activate {
+                let cmd = if IsIconic(h) != 0 {
+                    SW_RESTORE
+                } else {
+                    SW_SHOW
+                };
+                ShowWindow(h, cmd);
+                SetForegroundWindow(h);
+            } else {
+                ShowWindow(h, SW_SHOWNOACTIVATE);
+            }
+        }
+        true
+    }
+
     /// 切換置頂，不啟用視窗。
     pub fn set_topmost(hwnd: isize, topmost: bool) -> bool {
         let after = if topmost {
@@ -219,9 +254,34 @@ mod imp {
     pub fn set_topmost(_hwnd: isize, _topmost: bool) -> bool {
         false
     }
+    pub fn hide(_hwnd: isize) -> bool {
+        false
+    }
+    pub fn is_iconic(_hwnd: isize) -> bool {
+        false
+    }
+    pub fn show(_hwnd: isize, _activate: bool) -> bool {
+        false
+    }
 }
 
-pub use imp::{find_own_hwnd, fit_to_work_area, set_size, set_topmost};
+pub use imp::{find_own_hwnd, fit_to_work_area, hide, is_iconic, set_size, set_topmost, show};
+
+/// 視窗實際顯示狀態與期望（`AppViewState::window_hidden`）之間要做的動作。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Visibility {
+    Hide,
+    Show,
+}
+
+/// 純函式：期望隱藏而目前顯示 → 隱藏；期望顯示而目前隱藏 → 顯示；其餘不動。
+pub fn visibility_action(want_hidden: bool, shown: bool) -> Option<Visibility> {
+    match (want_hidden, shown) {
+        (true, true) => Some(Visibility::Hide),
+        (false, false) => Some(Visibility::Show),
+        _ => None,
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -270,6 +330,14 @@ mod tests {
     fn clamp_ignores_degenerate_work_area() {
         let r = PxRect::new(5, 5, 100, 100);
         assert_eq!(clamp_to_work_area(r, PxRect::new(0, 0, 0, 0)), r);
+    }
+
+    #[test]
+    fn visibility_diff() {
+        assert_eq!(visibility_action(true, true), Some(Visibility::Hide));
+        assert_eq!(visibility_action(false, false), Some(Visibility::Show));
+        assert_eq!(visibility_action(true, false), None);
+        assert_eq!(visibility_action(false, true), None);
     }
 
     #[test]
